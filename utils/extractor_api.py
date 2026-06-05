@@ -26,7 +26,7 @@ def _llamar_claude(system_prompt: str, user_prompt: str, pdfs: list[bytes]) -> s
     content.append({"type": "text", "text": user_prompt})
 
     response = client.messages.create(
-        model="claude-sonnet-4-20250514",
+        model="claude-sonnet-4-5",
         max_tokens=4096,
         system=system_prompt,
         messages=[{"role": "user", "content": content}]
