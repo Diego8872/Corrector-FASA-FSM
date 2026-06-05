@@ -7,6 +7,7 @@ from utils.parser_di import leer_di, safe_float
 from utils.validaciones import validar_items, validar_subitems, validar_liquidacion, validar_prorrateo, validar_ncm_excel
 from utils.extractor_api import extraer_factura, extraer_forwarding, extraer_bl, extraer_cm, extraer_dj_origen
 from utils.cruce_docs import validar_cm_vs_di, validar_factura_vs_di, validar_caratula_vs_docs, validar_dj_origen
+from utils.reporte_pdf import generar_reporte_pdf
 
 st.set_page_config(page_title="Corrector FASA/FSM", page_icon="🔍", layout="wide")
 
@@ -237,16 +238,38 @@ if analizar:
     with tabs[3]: mostrar(todos_resultados)
 
     # ─── EXPORT ───────────────────────────────────────────────────────────────
-    df_export = pd.DataFrame(todos_resultados)
-    if not df_export.empty:
-        df_export.columns = ["Ítem", "Campo", "Mensaje", "Nivel"]
-        output = io.BytesIO()
-        with pd.ExcelWriter(output, engine="openpyxl") as writer:
-            df_export.to_excel(writer, index=False, sheet_name="Validaciones")
-            df_export[df_export["Nivel"] == "ERROR"].to_excel(writer, index=False, sheet_name="Errores")
-            df_export[df_export["Nivel"] == "ALERTA"].to_excel(writer, index=False, sheet_name="Alertas")
-        st.download_button("📥 Descargar reporte Excel",
-            data=output.getvalue(),
-            file_name="reporte_corrector_FSM.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            use_container_width=True)
+    st.subheader("📥 Exportar reporte")
+    col_pdf, col_xlsx = st.columns(2)
+
+    # PDF profesional
+    with col_pdf:
+        try:
+            pdf_bytes = generar_reporte_pdf(todos_resultados, config)
+            st.download_button(
+                "📄 Descargar reporte PDF",
+                data=pdf_bytes,
+                file_name="reporte_corrector_FSM.pdf",
+                mime="application/pdf",
+                use_container_width=True,
+                type="primary"
+            )
+        except Exception as e:
+            st.error(f"Error generando PDF: {e}")
+
+    # Excel de respaldo
+    with col_xlsx:
+        df_export = pd.DataFrame(todos_resultados)
+        if not df_export.empty:
+            df_export.columns = ["Ítem", "Campo", "Mensaje", "Nivel"]
+            output = io.BytesIO()
+            with pd.ExcelWriter(output, engine="openpyxl") as writer:
+                df_export.to_excel(writer, index=False, sheet_name="Validaciones")
+                df_export[df_export["Nivel"] == "ERROR"].to_excel(writer, index=False, sheet_name="Errores")
+                df_export[df_export["Nivel"] == "ALERTA"].to_excel(writer, index=False, sheet_name="Alertas")
+            st.download_button(
+                "📊 Descargar Excel",
+                data=output.getvalue(),
+                file_name="reporte_corrector_FSM.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                use_container_width=True
+            )
