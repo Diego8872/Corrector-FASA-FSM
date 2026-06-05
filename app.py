@@ -178,7 +178,7 @@ if analizar:
 
         # ── 7. API: CMs ────────────────────────────────────────────────────
         datos_cm = {}
-        if cm_grupos:
+        if ce_files:
             st.write(f"📜 Extrayendo {len(cm_grupos)} CM(s) con IA...")
             for numero_cm, archivos in cm_grupos.items():
                 if "CE" in archivos and "RE" in archivos:
