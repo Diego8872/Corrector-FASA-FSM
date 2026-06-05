@@ -1,4 +1,5 @@
 import anthropic
+import time
 import base64
 import json
 import re
@@ -11,7 +12,7 @@ def get_client():
 def pdf_to_base64(file_bytes: bytes) -> str:
     return base64.standard_b64encode(file_bytes).decode("utf-8")
 
-def _llamar_claude(system_prompt: str, user_prompt: str, pdfs: list[bytes]) -> str:
+def _llamar_claude(system_prompt: str, user_prompt: str, pdfs: list, modelo: str = "claude-sonnet-4-5-20250929", max_tokens: int = 8192) -> str:
     client = get_client()
     content = []
     for pdf in pdfs:
@@ -25,13 +26,20 @@ def _llamar_claude(system_prompt: str, user_prompt: str, pdfs: list[bytes]) -> s
         })
     content.append({"type": "text", "text": user_prompt})
 
-    response = client.messages.create(
-        model="claude-sonnet-4-5",
-        max_tokens=4096,
-        system=system_prompt,
-        messages=[{"role": "user", "content": content}]
-    )
-    return response.content[0].text
+    for intento in range(3):
+        try:
+            response = client.messages.create(
+                model=modelo,
+                max_tokens=max_tokens,
+                system=system_prompt,
+                messages=[{"role": "user", "content": content}]
+            )
+            return response.content[0].text
+        except Exception as e:
+            if "rate_limit" in str(e) and intento < 2:
+                time.sleep(15 * (intento + 1))
+                continue
+            raise
 
 def _parse_json(texto: str) -> dict | list:
     texto = re.sub(r"```json|```", "", texto).strip()
@@ -204,7 +212,8 @@ IMPORTANTE:
 - El CE contiene datos generales (empresa, número, fecha)"""
 
     try:
-        texto = _llamar_claude(system, prompt, [pdf_ce_bytes, pdf_re_bytes])
+        texto = _llamar_claude(system, prompt, [pdf_ce_bytes, pdf_re_bytes],
+                               modelo="claude-haiku-4-5", max_tokens=8192)
         return _parse_json(texto)
     except Exception as e:
         return {"error": str(e)}
