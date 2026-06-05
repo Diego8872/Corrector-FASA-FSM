@@ -239,12 +239,12 @@ IMPORTANTE:
 # ─── EXTRAER NÚMERO RE DEL CE ─────────────────────────────────────────────────
 
 def extraer_numero_re_de_ce(pdf_bytes: bytes) -> str:
-    """Lee el CE y extrae el número RE que referencia."""
-    system = "Extraé solo el número RE del documento. Respondé SOLO con el número, sin texto adicional."
-    prompt = """En este Certificado de Autorización de Importación buscá el número de documento RE que figura
-en el texto (empieza con RE-20XX-XXXXXXXX-APN-...). Respondé solo con ese número exacto, nada más."""
+    """Extrae el número RE del CE usando PyMuPDF sin gastar API."""
     try:
-        texto = _llamar_claude(system, prompt, [pdf_bytes])
-        return texto.strip()
+        import fitz, re as _re
+        doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+        texto = "".join(page.get_text() for page in doc)
+        matches = _re.findall(r"RE-[0-9]{4}-[0-9]+[-\w#]+", texto)
+        return matches[0] if matches else ""
     except Exception as e:
         return ""
