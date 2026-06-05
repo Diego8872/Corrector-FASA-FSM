@@ -165,13 +165,8 @@ def validar_caratula_vs_docs(caratula: dict, datos_forwarding: dict, datos_bl: d
 
         if abs(flete_di - flete_doc) > TOLERANCIA_FOB:
             resultados.append(al("FLETE", f"DI: {flete_di:.2f} — Forwarding: {flete_doc:.2f}", "ERROR"))
-        else:
-            resultados.append(ok_("FLETE", f"Flete correcto: {flete_di:.2f}"))
-
         if abs(seguro_di - seguro_doc) > TOLERANCIA_FOB:
             resultados.append(al("SEGURO", f"DI: {seguro_di:.2f} — Forwarding: {seguro_doc:.2f}", "ERROR"))
-        else:
-            resultados.append(ok_("SEGURO", f"Seguro correcto: {seguro_di:.2f}"))
 
         for a in alertas_fw:
             resultados.append(al("FORWARDING", f"Cargo adicional: {a}"))
@@ -186,8 +181,7 @@ def validar_caratula_vs_docs(caratula: dict, datos_forwarding: dict, datos_bl: d
                 resultados.append(al("I:ITN-EEUU", f"ITN '{itn}' del BL no figura en el DI"))
 
         femb = datos_bl.get("fecha_embarque", "")
-        if femb:
-            resultados.append(ok_("I:FEMB-ORIGEN", f"Fecha embarque BL: {femb}"))
+
 
     return resultados
 
