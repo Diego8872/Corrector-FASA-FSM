@@ -256,3 +256,53 @@ def validar_prorrateo(df_items: pd.DataFrame, fob_total: float, flete_total: flo
             resultados.append(alerta(item, "SEGURO EN DIV", f"Seguro declarado {seguro_item:.5f} — esperado {seguro_esperado:.5f}"))
 
     return resultados
+
+
+# ─── VALIDACIÓN NCM vs EXCEL DE CLASIFICACIÓN ────────────────────────────────
+
+def validar_ncm_excel(df_subitems: pd.DataFrame, df_ncm: pd.DataFrame) -> list:
+    resultados = []
+    if df_ncm is None or df_ncm.empty:
+        return resultados
+
+    col_parte = None
+    col_ncm = None
+    for col in df_ncm.columns:
+        if "PART_NUMBER" in col.upper() or "PARTE" in col.upper():
+            col_parte = col
+        if col.upper() in ["NCM", "POSICION", "ARANCEL"]:
+            col_ncm = col
+
+    if not col_ncm and col_parte:
+        cols = list(df_ncm.columns)
+        idx = cols.index(col_parte)
+        if idx + 1 < len(cols):
+            col_ncm = cols[idx + 1]
+
+    if not col_parte or not col_ncm:
+        return [alerta("GENERAL", "NCM EXCEL", "No se pudo identificar columnas en el Excel de clasificación")]
+
+    from utils.parser_di import normalizar_codigo
+    mapa_ncm = {}
+    for _, row in df_ncm.iterrows():
+        parte = normalizar_codigo(str(row.get(col_parte, "")))
+        ncm = str(row.get(col_ncm, "")).strip()
+        if parte and ncm and ncm != "nan":
+            mapa_ncm[parte] = ncm.replace(".", "")[:8]
+
+    for _, row in df_subitems.iterrows():
+        item = str(row.get("ITEM", "?"))
+        modelo = normalizar_codigo(str(row.get("MODELO", "")))
+        ncm_di_raw = str(row.get("NCM", "")).replace(".", "").strip()
+        ncm_di_8 = ncm_di_raw[:8]
+
+        if not modelo or modelo == "NAN":
+            continue
+
+        if modelo in mapa_ncm:
+            ncm_excel_8 = mapa_ncm[modelo]
+            if ncm_di_8 != ncm_excel_8:
+                resultados.append(alerta(item, "NCM vs EXCEL",
+                    f"Código {modelo}: NCM DI {ncm_di_8} — NCM Excel {ncm_excel_8}", "ERROR"))
+
+    return resultados
