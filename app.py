@@ -184,8 +184,16 @@ if analizar:
                 if "CE" in archivos and "RE" in archivos:
                     try:
                         datos = extraer_cm(archivos["CE"].read(), archivos["RE"].read())
+                        # Normalizar match: extraer número central del CM
+                        import re as _re
+                        pat = _re.compile(r"[0-9]{8,}")
+                        def _extraer_num(s):
+                            m = pat.search(s)
+                            return m.group(0) if m else s
+                        num_archivo = _extraer_num(numero_cm)
                         numero_completo = next(
-                            (v for v in df_items["D:CERTSM"].unique() if numero_cm in v.upper()),
+                            (v for v in df_items["D:CERTSM"].unique() 
+                             if _extraer_num(v.upper()) == num_archivo),
                             numero_cm
                         )
                         datos_cm[numero_completo] = datos
