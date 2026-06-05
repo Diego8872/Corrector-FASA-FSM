@@ -6,8 +6,8 @@ from collections import defaultdict
 from config.defaults import EMPRESAS, DESPACHANTE, CUIT_DESPACHANTE, REGIMENES, ADUANAS
 from utils.parser_di import leer_di, safe_float
 from utils.validaciones import validar_items, validar_subitems, validar_liquidacion, validar_prorrateo
-from utils.extractor_api import extraer_factura, extraer_forwarding, extraer_bl, extraer_cm
-from utils.cruce_docs import validar_cm_vs_di, validar_factura_vs_di, validar_caratula_vs_docs
+from utils.extractor_api import extraer_factura, extraer_forwarding, extraer_bl, extraer_cm, extraer_dj_origen
+from utils.cruce_docs import validar_cm_vs_di, validar_factura_vs_di, validar_caratula_vs_docs, validar_dj_origen
 
 st.set_page_config(
     page_title="Corrector de Despachos FSM",
@@ -15,48 +15,34 @@ st.set_page_config(
     layout="wide"
 )
 
-# ─── ESTILOS ────────────────────────────────────────────────────────────────
 st.markdown("""
 <style>
 .titulo { font-size: 1.8rem; font-weight: 700; color: #1F3864; margin-bottom: 0.2rem; }
 .subtitulo { font-size: 1rem; color: #595959; margin-bottom: 1.5rem; }
-.badge-error { background: #FF4444; color: white; padding: 2px 8px; border-radius: 4px; font-size: 0.75rem; font-weight: 700; }
-.badge-alerta { background: #FFA500; color: white; padding: 2px 8px; border-radius: 4px; font-size: 0.75rem; font-weight: 700; }
-.badge-ok { background: #28A745; color: white; padding: 2px 8px; border-radius: 4px; font-size: 0.75rem; font-weight: 700; }
-.resumen-card { padding: 1rem; border-radius: 8px; text-align: center; }
 </style>
 """, unsafe_allow_html=True)
 
-st.markdown('<div class="titulo">🔍 Corrector de Despachos FSM</div>', unsafe_allow_html=True)
+st.markdown('<div class="titulo">🔍 Corrector de Despachos FASA/FSM</div>', unsafe_allow_html=True)
 st.markdown('<div class="subtitulo">Validación automática de despachos de importación — Finning Soluciones Mineras</div>', unsafe_allow_html=True)
 
-# ─── SIDEBAR CONFIGURACIÓN ───────────────────────────────────────────────────
+# ─── SIDEBAR ─────────────────────────────────────────────────────────────────
 with st.sidebar:
     st.header("⚙️ Configuración del Despacho")
-
     empresa = st.selectbox("Empresa importadora", list(EMPRESAS.keys()))
     cuit_ie = EMPRESAS[empresa]
     st.caption(f"CUIT: {cuit_ie}")
-
     regimen = st.selectbox("Régimen", REGIMENES)
     aduana = st.selectbox("Aduana", ADUANAS)
-
     st.divider()
     st.caption(f"**Despachante:** {DESPACHANTE}")
     st.caption(f"**CUIT DA:** {CUIT_DESPACHANTE}")
 
-config = {
-    "empresa": empresa,
-    "cuit_ie": cuit_ie,
-    "regimen": regimen,
-    "aduana": aduana,
-}
+config = {"empresa": empresa, "cuit_ie": cuit_ie, "regimen": regimen, "aduana": aduana}
 
 # ─── CARGA DE DOCUMENTOS ─────────────────────────────────────────────────────
 st.subheader("📁 Carga de documentos")
 
 col1, col2 = st.columns(2)
-
 with col1:
     di_file = st.file_uploader("📊 Excel del DI (Provisorio)", type=["xlsx", "xls"], key="di")
     facturas = st.file_uploader("🧾 Facturas comerciales (PDF)", type=["pdf"], accept_multiple_files=True, key="facturas")
@@ -65,9 +51,17 @@ with col1:
 with col2:
     bl_file = st.file_uploader("📋 Bill of Lading (PDF)", type=["pdf"], key="bl")
     ncm_file = st.file_uploader("📑 Excel de NCM por artículo", type=["xlsx", "xls"], key="ncm")
+    dj_origen_files = st.file_uploader(
+        "📄 DJ Origen No Preferencial (PDF)",
+        type=["pdf"],
+        accept_multiple_files=True,
+        key="dj_origen",
+        help="Declaración Jurada requerida cuando origen = procedencia. Subí uno o más PDFs con número IF."
+    )
 
+# ─── CERTIFICADOS MINEROS ────────────────────────────────────────────────────
 st.subheader("📜 Certificados Mineros (CM)")
-st.info("Para cada CM subí el CE y el RE juntos. Agrupá los archivos del mismo CM con el mismo nombre base.", icon="ℹ️")
+st.info("Para cada CM subí el CE y el RE. Los archivos deben comenzar con CE- o RE- seguido del número.", icon="ℹ️")
 
 cm_files = st.file_uploader(
     "Archivos de CM (CE y RE en PDF — podés subir varios)",
@@ -76,28 +70,24 @@ cm_files = st.file_uploader(
     key="cms"
 )
 
-# Agrupador de CM
+cm_grupos = {}
 if cm_files:
-    st.markdown("**Asignación de archivos a CMs:**")
-    cm_grupos = {}
     for f in cm_files:
-        partes = f.name.upper().split("_")
+        nombre = f.name.upper()
         tipo = None
         numero = None
-        for p in partes:
-            if p.startswith("CE-"):
-                tipo = "CE"
-                numero = p
-            elif p.startswith("RE-"):
-                tipo = "RE"
-                numero = p
+        if nombre.startswith("CE-"):
+            tipo = "CE"
+            numero = nombre.split("_")[0].replace(".PDF", "")
+        elif nombre.startswith("RE-"):
+            tipo = "RE"
+            numero = nombre.split("_")[0].replace(".PDF", "")
         if tipo and numero:
             if numero not in cm_grupos:
                 cm_grupos[numero] = {}
             cm_grupos[numero][tipo] = f
         else:
-            st.warning(f"No se pudo identificar si '{f.name}' es CE o RE — verificar nombre del archivo")
-
+            st.warning(f"No se pudo identificar '{f.name}' como CE o RE — verificar nombre")
     if cm_grupos:
         st.caption(f"CMs detectados: {', '.join(cm_grupos.keys())}")
 
@@ -111,7 +101,6 @@ if analizar:
         st.stop()
 
     todos_resultados = []
-    errores_criticos = []
 
     with st.status("Analizando despacho...", expanded=True) as status:
 
@@ -130,12 +119,10 @@ if analizar:
             st.stop()
 
         # ── 2. Validaciones sin API ────────────────────────────────────────
-        st.write("🔎 Validando campos del DI (sin API)...")
-
+        st.write("🔎 Validando campos del DI...")
         res_items = validar_items(df_items)
         res_sub = validar_subitems(df_subitems)
 
-        # Totales para prorrateo
         fob_total = df_items["VALOR FOB"].apply(safe_float).sum() if "VALOR FOB" in df_items.columns else 0
         flete_total_di = df_items["FLETE EN DIV"].apply(safe_float).sum() if "FLETE EN DIV" in df_items.columns else 0
         seguro_total_di = df_items["SEGURO EN DIV"].apply(safe_float).sum() if "SEGURO EN DIV" in df_items.columns else 0
@@ -144,7 +131,7 @@ if analizar:
         res_liq = validar_liquidacion(df_liq, df_items, df_subitems) if not df_liq.empty else []
 
         todos_resultados.extend(res_items + res_sub + res_prorrateo + res_liq)
-        st.write(f"   ✅ Validaciones locales: {len(todos_resultados)} resultados")
+        st.write(f"   ✅ Validaciones locales OK: {len(todos_resultados)} resultados")
 
         # ── 3. API: Facturas ───────────────────────────────────────────────
         datos_facturas = {}
@@ -157,7 +144,7 @@ if analizar:
                     st.write(f"   ✅ {fac.name}: {len(datos.get('items', []))} ítems")
                 except Exception as e:
                     datos_facturas[fac.name] = {"error": str(e)}
-                    st.write(f"   ❌ {fac.name}: Error — {e}")
+                    st.write(f"   ❌ {fac.name}: {e}")
 
         # ── 4. API: Forwarding Invoice ─────────────────────────────────────
         datos_forwarding = {}
@@ -170,7 +157,7 @@ if analizar:
                 datos_forwarding = {"error": str(e)}
                 st.write(f"   ❌ Error: {e}")
 
-        # ── 5. API: BL ────────────────────────────────────────────────────
+        # ── 5. API: BL ─────────────────────────────────────────────────────
         datos_bl = {}
         if bl_file:
             st.write("📋 Extrayendo Bill of Lading con IA...")
@@ -181,9 +168,22 @@ if analizar:
                 datos_bl = {"error": str(e)}
                 st.write(f"   ❌ Error: {e}")
 
-        # ── 6. API: CMs ───────────────────────────────────────────────────
+        # ── 6. API: DJ Origen No Preferencial ─────────────────────────────
+        datos_dj_origen = []
+        if dj_origen_files:
+            st.write(f"📄 Extrayendo {len(dj_origen_files)} DJ(s) de origen con IA...")
+            for dj_file in dj_origen_files:
+                try:
+                    datos = extraer_dj_origen(dj_file.read())
+                    datos_dj_origen.append(datos)
+                    st.write(f"   ✅ {dj_file.name}: IF={datos.get('numero_if', '?')}")
+                except Exception as e:
+                    datos_dj_origen.append({"error": str(e), "archivo": dj_file.name})
+                    st.write(f"   ❌ {dj_file.name}: {e}")
+
+        # ── 7. API: CMs ────────────────────────────────────────────────────
         datos_cm = {}
-        if cm_files and cm_grupos:
+        if cm_grupos:
             st.write(f"📜 Extrayendo {len(cm_grupos)} CM(s) con IA...")
             for numero_cm, archivos in cm_grupos.items():
                 if "CE" in archivos and "RE" in archivos:
@@ -191,34 +191,33 @@ if analizar:
                         ce_bytes = archivos["CE"].read()
                         re_bytes = archivos["RE"].read()
                         datos = extraer_cm(ce_bytes, re_bytes)
-                        # Buscar el número de CM completo en df_items para hacer match
                         numero_completo = next(
                             (v for v in df_items["D:CERTSM"].unique() if numero_cm in v.upper()),
                             numero_cm
                         )
                         datos_cm[numero_completo] = datos
-                        st.write(f"   ✅ {numero_cm}: {len(datos.get('items', []))} ítems extraídos")
+                        st.write(f"   ✅ {numero_cm}: {len(datos.get('items', []))} ítems")
                     except Exception as e:
                         datos_cm[numero_cm] = {"error": str(e)}
-                        st.write(f"   ❌ {numero_cm}: Error — {e}")
+                        st.write(f"   ❌ {numero_cm}: {e}")
                 else:
                     faltante = "RE" if "CE" in archivos else "CE"
                     st.write(f"   ⚠️ {numero_cm}: Falta el archivo {faltante}")
 
-        # ── 7. Cruces contra documentos ───────────────────────────────────
+        # ── 8. Cruces contra documentos ────────────────────────────────────
         st.write("🔀 Cruzando datos contra documentos...")
 
         if datos_cm:
-            res_cm = validar_cm_vs_di(df_items, df_subitems, datos_cm)
-            todos_resultados.extend(res_cm)
+            todos_resultados.extend(validar_cm_vs_di(df_items, df_subitems, datos_cm))
 
         if datos_facturas:
-            res_fac = validar_factura_vs_di(df_items, df_subitems, datos_facturas)
-            todos_resultados.extend(res_fac)
+            todos_resultados.extend(validar_factura_vs_di(df_items, df_subitems, datos_facturas))
 
         if datos_forwarding or datos_bl:
-            res_caratula = validar_caratula_vs_docs(caratula, datos_forwarding, datos_bl, datos_facturas, config)
-            todos_resultados.extend(res_caratula)
+            todos_resultados.extend(validar_caratula_vs_docs(caratula, datos_forwarding, datos_bl, datos_facturas, config))
+
+        if datos_dj_origen:
+            todos_resultados.extend(validar_dj_origen(df_items, datos_dj_origen))
 
         status.update(label="✅ Análisis completado", state="complete")
 
@@ -230,15 +229,14 @@ if analizar:
     st.subheader("📊 Resumen del análisis")
     c1, c2, c3 = st.columns(3)
     with c1:
-        st.metric("❌ Errores", len(errores), delta=None)
+        st.metric("❌ Errores", len(errores))
     with c2:
-        st.metric("⚠️ Alertas", len(alertas), delta=None)
+        st.metric("⚠️ Alertas", len(alertas))
     with c3:
-        st.metric("✅ OK", len(oks), delta=None)
+        st.metric("✅ OK", len(oks))
 
-    # ─── RESULTADOS DETALLADOS ────────────────────────────────────────────────
+    # ─── DETALLE ─────────────────────────────────────────────────────────────
     st.subheader("📋 Detalle de validaciones")
-
     tabs = st.tabs(["❌ Errores", "⚠️ Alertas", "✅ OK", "📄 Todo"])
 
     def mostrar_tabla(lista):
@@ -249,31 +247,20 @@ if analizar:
         df.columns = ["Ítem", "Campo", "Mensaje", "Nivel"]
         st.dataframe(df, use_container_width=True, hide_index=True)
 
-    with tabs[0]:
-        mostrar_tabla(errores)
-    with tabs[1]:
-        mostrar_tabla(alertas)
-    with tabs[2]:
-        mostrar_tabla(oks)
-    with tabs[3]:
-        mostrar_tabla(todos_resultados)
+    with tabs[0]: mostrar_tabla(errores)
+    with tabs[1]: mostrar_tabla(alertas)
+    with tabs[2]: mostrar_tabla(oks)
+    with tabs[3]: mostrar_tabla(todos_resultados)
 
-    # ─── EXPORT ───────────────────────────────────────────────────────────────
-    st.subheader("📥 Exportar reporte")
-
+    # ─── EXPORT ──────────────────────────────────────────────────────────────
     df_export = pd.DataFrame(todos_resultados)
     if not df_export.empty:
         df_export.columns = ["Ítem", "Campo", "Mensaje", "Nivel"]
         output = io.BytesIO()
         with pd.ExcelWriter(output, engine="openpyxl") as writer:
             df_export.to_excel(writer, index=False, sheet_name="Validaciones")
-            errores_df = df_export[df_export["Nivel"] == "ERROR"]
-            alertas_df = df_export[df_export["Nivel"] == "ALERTA"]
-            if not errores_df.empty:
-                errores_df.to_excel(writer, index=False, sheet_name="Errores")
-            if not alertas_df.empty:
-                alertas_df.to_excel(writer, index=False, sheet_name="Alertas")
-
+            df_export[df_export["Nivel"] == "ERROR"].to_excel(writer, index=False, sheet_name="Errores")
+            df_export[df_export["Nivel"] == "ALERTA"].to_excel(writer, index=False, sheet_name="Alertas")
         st.download_button(
             "📥 Descargar reporte Excel",
             data=output.getvalue(),
