@@ -22,7 +22,7 @@ GRIS_TEXTO  = colors.HexColor("#595959")
 BLANCO      = colors.white
 
 
-def generar_reporte_pdf(todos_resultados: list, config: dict, numero_di: str = "") -> bytes:
+def generar_reporte_pdf(todos_resultados: list, config: dict, numero_di: str = "", docs_procesados: dict = None) -> bytes:
     buffer = io.BytesIO()
 
     doc = SimpleDocTemplate(
@@ -94,7 +94,29 @@ def generar_reporte_pdf(todos_resultados: list, config: dict, numero_di: str = "
         ("LEFTPADDING", (0,0), (-1,-1), 6),
     ]))
     story.append(tabla_info)
-    story.append(Spacer(1, 14))
+    story.append(Spacer(1, 10))
+
+    # ─── DOCUMENTOS PROCESADOS ────────────────────────────────────────────────
+    if docs_procesados:
+        story.append(Paragraph("Documentos procesados", estilo_seccion))
+        docs_data = []
+        for nombre_doc, info in docs_procesados.items():
+            icono = "OK" if info.get("ok") else "---"
+            docs_data.append([icono, nombre_doc, info.get("detalle", "")])
+        tabla_docs = Table(docs_data, colWidths=[1*cm, 5.5*cm, 11.5*cm])
+        tabla_docs.setStyle(TableStyle([
+            ("FONTSIZE", (0,0), (-1,-1), 8),
+            ("FONTNAME", (0,0), (-1,-1), "Helvetica"),
+            ("ROWBACKGROUNDS", (0,0), (-1,-1), [GRIS_CLARO, BLANCO]),
+            ("BOX", (0,0), (-1,-1), 0.5, colors.lightgrey),
+            ("INNERGRID", (0,0), (-1,-1), 0.3, colors.lightgrey),
+            ("TOPPADDING", (0,0), (-1,-1), 4),
+            ("BOTTOMPADDING", (0,0), (-1,-1), 4),
+            ("LEFTPADDING", (0,0), (-1,-1), 5),
+            ("VALIGN", (0,0), (-1,-1), "MIDDLE"),
+        ]))
+        story.append(tabla_docs)
+        story.append(Spacer(1, 10))
 
     # ─── RESUMEN EJECUTIVO ────────────────────────────────────────────────────
     errores  = [r for r in todos_resultados if r["nivel"] == "ERROR"]
