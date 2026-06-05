@@ -262,3 +262,55 @@ def _buscar_caratula(caratula: dict, campo: str) -> str | None:
         if campo_upper in k.upper():
             return str(v).strip()
     return None
+
+
+def validar_dj_origen(df_items: pd.DataFrame, datos_dj: list) -> list:
+    """
+    Valida que los ítems con D:DJ-ORIG-NOPREFER tengan el PDF de DJ subido
+    y que el número IF coincida.
+    """
+    resultados = []
+
+    # Extraer números IF de los PDFs subidos
+    ifs_subidos = []
+    for dj in datos_dj:
+        if "error" not in dj and dj.get("numero_if"):
+            ifs_subidos.append(dj["numero_if"].strip().upper())
+
+    for _, row in df_items.iterrows():
+        item = str(row.get("ITEM", "")).strip().zfill(4)
+        dj_campo = row.get("D:DJ-ORIG-NOPREFER", "").strip()
+
+        if not dj_campo:
+            continue
+
+        # El ítem tiene DJ declarada — verificar que el PDF esté subido
+        if not ifs_subidos:
+            resultados.append({
+                "item": item,
+                "campo": "D:DJ-ORIG-NOPREFER",
+                "mensaje": f"DJ declarada '{dj_campo}' pero no se subió ningún PDF de DJ de origen",
+                "nivel": "ERROR"
+            })
+            continue
+
+        # Verificar que el número IF del campo coincida con algún PDF subido
+        dj_upper = dj_campo.upper()
+        coincide = any(dj_upper in if_sub or if_sub in dj_upper for if_sub in ifs_subidos)
+
+        if not coincide:
+            resultados.append({
+                "item": item,
+                "campo": "D:DJ-ORIG-NOPREFER",
+                "mensaje": f"DJ '{dj_campo}' no coincide con ningún PDF subido ({', '.join(ifs_subidos)})",
+                "nivel": "ERROR"
+            })
+        else:
+            resultados.append({
+                "item": item,
+                "campo": "D:DJ-ORIG-NOPREFER",
+                "mensaje": f"DJ verificada: {dj_campo}",
+                "nivel": "OK"
+            })
+
+    return resultados
