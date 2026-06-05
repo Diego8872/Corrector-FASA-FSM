@@ -207,7 +207,7 @@ if analizar:
                 except Exception as e:
                     return numero_completo, {"error": str(e)}, numero_ce, num_re, str(e)
 
-            with ThreadPoolExecutor(max_workers=5) as executor:
+            with ThreadPoolExecutor(max_workers=2) as executor:
                 futures = {executor.submit(procesar_cm, item): item for item in pares_cm.items()}
                 for future in as_completed(futures):
                     numero_completo, datos, numero_ce, num_re, error = future.result()
