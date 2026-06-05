@@ -53,12 +53,15 @@ def _find_sheet(sheets: dict, keywords: list):
 def _leer_caratula(xl, sheet_name) -> dict:
     df = xl.parse(sheet_name, header=None)
     data = {}
-    for _, row in df.iterrows():
-        for i in range(len(row) - 1):
-            key = str(row.iloc[i]).strip() if pd.notna(row.iloc[i]) else ""
-            val = str(row.iloc[i+1]).strip() if pd.notna(row.iloc[i+1]) else ""
+    # Fila 0 = headers, Fila 1 = valores (estructura horizontal)
+    if len(df) >= 2:
+        headers = df.iloc[0]
+        valores = df.iloc[1]
+        for i in range(len(headers)):
+            key = str(headers.iloc[i]).strip() if pd.notna(headers.iloc[i]) else ""
+            val = str(valores.iloc[i]).strip() if pd.notna(valores.iloc[i]) else ""
             if key and key != "nan":
-                data[key] = val
+                data[key] = val if val != "nan" else ""
     return data
 
 
@@ -66,9 +69,6 @@ def _leer_items(xl, sheet_name) -> pd.DataFrame:
     df = xl.parse(sheet_name, dtype=str)
     df.columns = [str(c).strip().upper() for c in df.columns]
     df = df.fillna("")
-    # Filtrar filas sin ITEM válido
-    if "ITEM" in df.columns:
-        df = df[df["ITEM"].str.strip() != ""].reset_index(drop=True)
     return df
 
 
@@ -76,9 +76,6 @@ def _leer_subitems(xl, sheet_name) -> pd.DataFrame:
     df = xl.parse(sheet_name, dtype=str)
     df.columns = [str(c).strip().upper() for c in df.columns]
     df = df.fillna("")
-    # Filtrar filas sin ITEM válido
-    if "ITEM" in df.columns:
-        df = df[df["ITEM"].str.strip() != ""].reset_index(drop=True)
     return df
 
 
@@ -86,9 +83,6 @@ def _leer_liquidacion(xl, sheet_name) -> pd.DataFrame:
     df = xl.parse(sheet_name, dtype=str)
     df.columns = [str(c).strip().upper() for c in df.columns]
     df = df.fillna("")
-    # Filtrar filas sin ITEM válido
-    if "ITEM" in df.columns:
-        df = df[df["ITEM"].str.strip() != ""].reset_index(drop=True)
     return df
 
 
@@ -96,9 +90,6 @@ def _leer_bultos(xl, sheet_name) -> pd.DataFrame:
     df = xl.parse(sheet_name, dtype=str)
     df.columns = [str(c).strip().upper() for c in df.columns]
     df = df.fillna("")
-    # Filtrar filas sin ITEM válido
-    if "ITEM" in df.columns:
-        df = df[df["ITEM"].str.strip() != ""].reset_index(drop=True)
     return df
 
 
