@@ -230,14 +230,50 @@ if analizar:
 
         status.update(label="✅ Análisis completado", state="complete")
 
+    # Armar resumen de documentos procesados
+    docs_procesados = {}
+    docs_procesados["Excel DI"] = {"ok": True, "detalle": f"{len(df_items)} ítems leídos"}
+
+    if ce_files:
+        cms_ok = [k for k,v in datos_cm.items() if "error" not in v]
+        cms_err = [k for k,v in datos_cm.items() if "error" in v]
+        det = f"{len(cms_ok)} CM(s) procesados"
+        if cms_err: det += f" | {len(cms_err)} con error"
+        docs_procesados["Certificados Mineros"] = {"ok": len(cms_err)==0, "detalle": det}
+    else:
+        docs_procesados["Certificados Mineros"] = {"ok": False, "detalle": "No se subieron CMs"}
+
+    if datos_forwarding and "error" not in datos_forwarding:
+        docs_procesados["Forwarding Invoice"] = {"ok": True, "detalle": f"Flete: {datos_forwarding.get('flete_total')} | Seguro: {datos_forwarding.get('seguro_total')}"}
+    else:
+        docs_procesados["Forwarding Invoice"] = {"ok": False, "detalle": "No procesada"}
+
+    if datos_bl and "error" not in datos_bl:
+        docs_procesados["Bill of Lading"] = {"ok": True, "detalle": f"BL: {datos_bl.get('bl_number')} | Embarque: {datos_bl.get('fecha_embarque')}"}
+    else:
+        docs_procesados["Bill of Lading"] = {"ok": False, "detalle": "No procesado"}
+
+    if datos_facturas:
+        facs_ok = len([k for k,v in datos_facturas.items() if "error" not in v])
+        docs_procesados["Facturas"] = {"ok": facs_ok > 0, "detalle": f"{facs_ok} factura(s) procesadas"}
+    else:
+        docs_procesados["Facturas"] = {"ok": False, "detalle": "No se subieron facturas"}
+
+    if datos_dj:
+        docs_procesados["DJ Origen No Preferencial"] = {"ok": True, "detalle": f"{len(datos_dj)} DJ(s) procesadas"}
+    else:
+        docs_procesados["DJ Origen No Preferencial"] = {"ok": False, "detalle": "No se subió DJ"}
+
     # Guardar en session_state para persistencia
     st.session_state["resultados"] = todos_resultados
     st.session_state["config"] = config
+    st.session_state["docs_procesados"] = docs_procesados
 
 # ─── MOSTRAR RESULTADOS (persisten tras descarga) ─────────────────────────────
 if "resultados" in st.session_state:
     todos_resultados = st.session_state["resultados"]
     config_actual = st.session_state.get("config", config)
+    docs_procesados = st.session_state.get("docs_procesados", {})
 
     errores = [r for r in todos_resultados if r["nivel"] == "ERROR"]
     alertas_list = [r for r in todos_resultados if r["nivel"] == "ALERTA"]
@@ -271,7 +307,7 @@ if "resultados" in st.session_state:
 
     with col_pdf:
         try:
-            pdf_bytes = generar_reporte_pdf(todos_resultados, config_actual)
+            pdf_bytes = generar_reporte_pdf(todos_resultados, config_actual, docs_procesados=docs_procesados)
             st.download_button("📄 Descargar reporte PDF",
                 data=pdf_bytes,
                 file_name="reporte_corrector_FSM.pdf",
