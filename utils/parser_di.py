@@ -66,6 +66,9 @@ def _leer_items(xl, sheet_name) -> pd.DataFrame:
     df = xl.parse(sheet_name, dtype=str)
     df.columns = [str(c).strip().upper() for c in df.columns]
     df = df.fillna("")
+    # Filtrar filas sin ITEM válido
+    if "ITEM" in df.columns:
+        df = df[df["ITEM"].str.strip() != ""].reset_index(drop=True)
     return df
 
 
@@ -73,6 +76,9 @@ def _leer_subitems(xl, sheet_name) -> pd.DataFrame:
     df = xl.parse(sheet_name, dtype=str)
     df.columns = [str(c).strip().upper() for c in df.columns]
     df = df.fillna("")
+    # Filtrar filas sin ITEM válido
+    if "ITEM" in df.columns:
+        df = df[df["ITEM"].str.strip() != ""].reset_index(drop=True)
     return df
 
 
@@ -80,6 +86,9 @@ def _leer_liquidacion(xl, sheet_name) -> pd.DataFrame:
     df = xl.parse(sheet_name, dtype=str)
     df.columns = [str(c).strip().upper() for c in df.columns]
     df = df.fillna("")
+    # Filtrar filas sin ITEM válido
+    if "ITEM" in df.columns:
+        df = df[df["ITEM"].str.strip() != ""].reset_index(drop=True)
     return df
 
 
@@ -87,6 +96,9 @@ def _leer_bultos(xl, sheet_name) -> pd.DataFrame:
     df = xl.parse(sheet_name, dtype=str)
     df.columns = [str(c).strip().upper() for c in df.columns]
     df = df.fillna("")
+    # Filtrar filas sin ITEM válido
+    if "ITEM" in df.columns:
+        df = df[df["ITEM"].str.strip() != ""].reset_index(drop=True)
     return df
 
 
