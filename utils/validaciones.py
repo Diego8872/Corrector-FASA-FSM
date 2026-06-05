@@ -93,11 +93,7 @@ def validar_items(df_items: pd.DataFrame) -> list:
         if impogiro and impogiro != IMPOGIRO:
             resultados.append(alerta(item, "I:IMPOGIRO-DIV-OPC", f"Debe ser CGDDIF, tiene: '{impogiro}'", "ERROR"))
 
-        # Campos dumping — informar
-        for campo in CAMPOS_DUMPING_DJ + ["I:DUMPR60PAISIGUAL"]:
-            val = row.get(campo, "").strip()
-            if val:
-                resultados.append(alerta(item, campo, f"Declarado: '{val}' — verificar origen=procedencia y DJ adjunta"))
+
 
         # Campos informativos
         for campo in ["I:DNRT-EXC-OPC", "I:AUTOPARTESEG-OPC", "I:DNRT-OPC"]:
@@ -175,6 +171,13 @@ def validar_liquidacion(df_liq: pd.DataFrame, df_items: pd.DataFrame, df_subitem
         if tiene_cm:
             base_032 = vals["fob"] + vals["flete"] + vals["seguro"]
 
+            # Con CM: 010 y 011 NO deben aparecer
+            for c in conceptos_item:
+                if "010" in c["concepto"]:
+                    resultados.append(alerta(item, "LIQUIDACIÓN", f"Ítem CON CM no debería tener '010 - DERECHOS IMPORTACION'"))
+                if "011" in c["concepto"]:
+                    resultados.append(alerta(item, "LIQUIDACIÓN", f"Ítem CON CM no debería tener '011 - TASA DE ESTADISTICA'"))
+
             for cod, info in CONCEPTOS_CON_CM.items():
                 nombre = info["nombre"]
                 pct_esperado = info["porcentaje"]
@@ -184,14 +187,12 @@ def validar_liquidacion(df_liq: pd.DataFrame, df_items: pd.DataFrame, df_subitem
                     resultados.append(alerta(item, "LIQUIDACIÓN", f"Falta concepto '{nombre}'", "ERROR"))
                     continue
 
-                # Validar porcentaje
                 pct_real = match["porcentaje"]
                 if cod == "032":
                     if abs(pct_real - pct_esperado) > 0.001:
                         resultados.append(alerta(item, "LIQUIDACIÓN", f"'{nombre}': porcentaje {pct_real}% — se esperaba {pct_esperado}%", "ERROR"))
                     importe_032 = match["importe"]
                 elif cod == "415":
-                    # IVA: acepta 21% y 10.5%
                     if abs(pct_real - 21.0) < 0.001:
                         pass  # OK
                     elif abs(pct_real - 10.5) < 0.001:
@@ -202,7 +203,6 @@ def validar_liquidacion(df_liq: pd.DataFrame, df_items: pd.DataFrame, df_subitem
                     if abs(pct_real - pct_esperado) > 0.001:
                         resultados.append(alerta(item, "LIQUIDACIÓN", f"'{nombre}': porcentaje {pct_real}% — se esperaba {pct_esperado}%", "ERROR"))
 
-                # Validar base imponible
                 if cod == "032":
                     base_esperada = base_032
                 else:
@@ -218,19 +218,43 @@ def validar_liquidacion(df_liq: pd.DataFrame, df_items: pd.DataFrame, df_subitem
                 if not tiene_056:
                     resultados.append(alerta(item, "LIQUIDACIÓN", "Ítem USADO pero falta '056 - D.I. USADOS R.909/94'", "ERROR"))
 
+            # Conceptos inesperados CON CM
+            conceptos_esperados_con_cm = ["032", "415", "900", "056"]
+            for c in conceptos_item:
+                es_esperado = any(cod in c["concepto"] for cod in conceptos_esperados_con_cm)
+                es_dumping = any(kw in c["concepto"].upper() for kw in KEYWORDS_DUMPING)
+                es_010_011 = "010" in c["concepto"] or "011" in c["concepto"]
+                if not es_esperado and not es_dumping and not es_010_011:
+                    resultados.append(alerta(item, "LIQUIDACIÓN", f"Concepto no esperado (ítem con CM): '{c['concepto']}' — verificar"))
+
         else:
             # Sin CM: no debe tener 032
             tiene_032 = any(CONCEPTO_SIN_CM_PROHIBIDO in c["concepto"] for c in conceptos_item)
             if tiene_032:
                 resultados.append(alerta(item, "LIQUIDACIÓN", "Ítem SIN CM tiene concepto '032 - TASA LEY 24196' — verificar", "ERROR"))
 
-        # Conceptos inesperados
-        conceptos_esperados_cod = ["032", "415", "900", "056"]
-        for c in conceptos_item:
-            es_esperado = any(cod in c["concepto"] for cod in conceptos_esperados_cod)
-            es_dumping = any(kw in c["concepto"].upper() for kw in KEYWORDS_DUMPING)
-            if not es_esperado and not es_dumping:
-                resultados.append(alerta(item, "LIQUIDACIÓN", f"Concepto no esperado: '{c['concepto']}' — verificar"))
+            # Sin CM: 415 y 900 deben aparecer siempre
+            for cod, nombre in [("415", "415 - I.V.A."), ("900", "900 - INGRESOS BRUTOS")]:
+                match = next((c for c in conceptos_item if cod in c["concepto"]), None)
+                if not match:
+                    resultados.append(alerta(item, "LIQUIDACIÓN", f"Ítem SIN CM: falta concepto '{nombre}'", "ERROR"))
+                elif cod == "415":
+                    pct_real = match["porcentaje"]
+                    if abs(pct_real - 21.0) < 0.001:
+                        pass
+                    elif abs(pct_real - 10.5) < 0.001:
+                        resultados.append(alerta(item, "LIQUIDACIÓN", f"'{nombre}': alícuota reducida 10.5% — verificar NCM"))
+                    else:
+                        resultados.append(alerta(item, "LIQUIDACIÓN", f"'{nombre}': porcentaje {pct_real}% — se esperaba 21% o 10.5%", "ERROR"))
+
+            # Conceptos inesperados SIN CM
+            conceptos_esperados_sin_cm = ["010", "011", "415", "429", "450", "451", "452", "453",
+                                           "454", "455", "456", "457", "458", "459", "460", "900", "056"]
+            for c in conceptos_item:
+                es_esperado = any(cod in c["concepto"] for cod in conceptos_esperados_sin_cm)
+                es_dumping = any(kw in c["concepto"].upper() for kw in KEYWORDS_DUMPING)
+                if not es_esperado and not es_dumping:
+                    resultados.append(alerta(item, "LIQUIDACIÓN", f"Concepto no esperado (ítem sin CM): '{c['concepto']}' — verificar"))
 
     return resultados
 
