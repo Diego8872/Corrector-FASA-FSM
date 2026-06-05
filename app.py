@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 import io
 import re as _re
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from config.defaults import EMPRESAS, DESPACHANTE, CUIT_DESPACHANTE, REGIMENES, ADUANAS
 from utils.parser_di import leer_di, safe_float
@@ -174,43 +175,47 @@ if analizar:
                     datos_dj.append({"error": str(e)})
                     st.write(f"   ❌ {dj_file.name}: {e}")
 
-        # ── 8. API: CMs ───────────────────────────────────────────────────
+        # ── 8. API: CMs en paralelo ───────────────────────────────────────
         datos_cm = {}
         if ce_files:
-            st.write(f"📜 Procesando {len(ce_files)} CM(s) con IA...")
+            st.write(f"📜 Procesando {len(ce_files)} CM(s) en paralelo...")
+
+            # Preparar pares CE+RE
+            pares_cm = {}
             for numero_ce, ce_file in ce_files.items():
-                try:
-                    ce_bytes = ce_file.read()
-
-                    # Extraer número RE del CE via API
-                    numero_re_completo = extraer_numero_re_de_ce(ce_bytes)
-                    num_re = _num(numero_re_completo)
-
-                    # Buscar el RE correspondiente
-                    re_file = next(
-                        (f for n, f in re_files.items() if _num(n) == num_re),
-                        None
-                    )
-
-                    if not re_file:
-                        st.write(f"   ⚠️ {numero_ce}: No se encontró el RE ({numero_re_completo})")
-                        continue
-
+                ce_bytes = ce_file.read()
+                numero_re_completo = extraer_numero_re_de_ce(ce_bytes)
+                num_re = _num(numero_re_completo)
+                re_file = next((f for n, f in re_files.items() if _num(n) == num_re), None)
+                if re_file:
                     re_bytes = re_file.read()
-                    datos = extraer_cm(ce_bytes, re_bytes)
-
-                    # Matchear con número CE del DI
                     num_ce = _num(numero_ce)
                     numero_completo = next(
                         (v for v in df_items["D:CERTSM"].unique() if _num(v) == num_ce),
                         numero_ce
                     )
-                    datos_cm[numero_completo] = datos
-                    st.write(f"   ✅ {numero_ce} → RE: {num_re} | {len(datos.get('items', []))} ítems")
+                    pares_cm[numero_completo] = (ce_bytes, re_bytes, numero_ce, num_re)
+                else:
+                    st.write(f"   ⚠️ {numero_ce}: No se encontró el RE ({numero_re_completo})")
 
+            # Procesar en paralelo
+            def procesar_cm(args):
+                numero_completo, (ce_bytes, re_bytes, numero_ce, num_re) = args
+                try:
+                    datos = extraer_cm(ce_bytes, re_bytes)
+                    return numero_completo, datos, numero_ce, num_re, None
                 except Exception as e:
-                    datos_cm[numero_ce] = {"error": str(e)}
-                    st.write(f"   ❌ {numero_ce}: {e}")
+                    return numero_completo, {"error": str(e)}, numero_ce, num_re, str(e)
+
+            with ThreadPoolExecutor(max_workers=5) as executor:
+                futures = {executor.submit(procesar_cm, item): item for item in pares_cm.items()}
+                for future in as_completed(futures):
+                    numero_completo, datos, numero_ce, num_re, error = future.result()
+                    datos_cm[numero_completo] = datos
+                    if error:
+                        st.write(f"   ❌ {numero_ce}: {error}")
+                    else:
+                        st.write(f"   ✅ {numero_ce} → RE: {num_re} | {len(datos.get('items', []))} ítems")
 
         # ── 9. Cruces ─────────────────────────────────────────────────────
         st.write("🔀 Cruzando datos...")
@@ -225,7 +230,15 @@ if analizar:
 
         status.update(label="✅ Análisis completado", state="complete")
 
-    # ─── RESUMEN ──────────────────────────────────────────────────────────────
+    # Guardar en session_state para persistencia
+    st.session_state["resultados"] = todos_resultados
+    st.session_state["config"] = config
+
+# ─── MOSTRAR RESULTADOS (persisten tras descarga) ─────────────────────────────
+if "resultados" in st.session_state:
+    todos_resultados = st.session_state["resultados"]
+    config_actual = st.session_state.get("config", config)
+
     errores = [r for r in todos_resultados if r["nivel"] == "ERROR"]
     alertas_list = [r for r in todos_resultados if r["nivel"] == "ALERTA"]
     oks = [r for r in todos_resultados if r["nivel"] == "OK"]
@@ -258,7 +271,7 @@ if analizar:
 
     with col_pdf:
         try:
-            pdf_bytes = generar_reporte_pdf(todos_resultados, config)
+            pdf_bytes = generar_reporte_pdf(todos_resultados, config_actual)
             st.download_button("📄 Descargar reporte PDF",
                 data=pdf_bytes,
                 file_name="reporte_corrector_FSM.pdf",
