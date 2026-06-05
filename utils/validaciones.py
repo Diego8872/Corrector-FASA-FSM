@@ -35,8 +35,7 @@ def validar_items(df_items: pd.DataFrame) -> list:
         estado = row.get("ESTADO", "").strip()
         if "NUEVO SIN USO IMPORTADO" not in estado.upper():
             resultados.append(alerta(item, "ESTADO", f"Estado '{estado}' — verificar si es correcto"))
-        else:
-            resultados.append(ok(item, "ESTADO", "Estado correcto"))
+
 
         # ORIGEN prohibido
         origen = row.get("ORIGEN", "").strip()
@@ -59,8 +58,7 @@ def validar_items(df_items: pd.DataFrame) -> list:
                 resultados.append(alerta(item, "D:DJ-ORIG-NOPREFER",
                     f"Campos dumping declarados y origen=procedencia ({origen_cod}) — falta número IF en DJ",
                     "ERROR"))
-            else:
-                resultados.append(ok(item, "D:DJ-ORIG-NOPREFER", f"DJ declarada: {dj}"))
+
 
         # CM: campos obligatorios
         if tiene_cm:
