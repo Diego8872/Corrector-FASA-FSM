@@ -53,43 +53,12 @@ def extraer_factura(pdf_bytes: bytes) -> dict:
     return extraer_factura_cat(pdf_bytes)
 
 
-# ─── EXTRACCIÓN FORWARDING INVOICE ───────────────────────────────────────────
+# ─── EXTRACCIÓN FORWARDING INVOICE ──────────────────────────────────────────
 
 def extraer_forwarding(pdf_bytes: bytes) -> dict:
-    system = """Sos un experto en comercio exterior argentino.
-Analizás forwarding invoices de DHL/Caterpillar y extraés datos con precisión.
-Respondé SOLO con JSON válido, sin texto adicional."""
-
-    prompt = """Analizá esta Forwarding Invoice y extraé los datos en formato JSON:
-{
-  "numero_invoice": "...",
-  "fecha": "...",
-  "incoterm": "...",
-  "flete_total": 0.0,
-  "detalle_flete": [
-    {"concepto": "...", "monto": 0.0}
-  ],
-  "seguro_marine_premium": 0.0,
-  "seguro_war_premium": 0.0,
-  "seguro_otros": [],
-  "seguro_total": 0.0,
-  "otros_cargos": [],
-  "total_invoice_dealer": 0.0,
-  "moneda": "USD",
-  "alertas": []
-}
-
-IMPORTANTE:
-- flete_total: es el "Total Charge to Caterpillar" (suma de todos los conceptos de flete/forwarding)
-- seguro_total: Marine Premium + War Premium + cualquier otro concepto de seguro
-- otros_cargos: cualquier cargo que NO sea flete ni seguro con monto > 0
-- alertas: si hay "Finance Charges to Dealer" u "Other Charges" con valor > 0, incluirlos como alerta"""
-
-    try:
-        texto = _llamar_claude(system, prompt, [pdf_bytes])
-        return _parse_json(texto)
-    except Exception as e:
-        return {"error": str(e)}
+    """Extrae Forwarding Invoice CAT/DHL usando PyMuPDF + regex. Sin API."""
+    from utils.parser_forwarding import extraer_forwarding as _extraer
+    return _extraer(pdf_bytes)
 
 
 # ─── EXTRACCIÓN BL ───────────────────────────────────────────────────────────
