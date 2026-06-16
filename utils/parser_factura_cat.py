@@ -10,6 +10,8 @@ Casos especiales manejados:
   - Mismo código repetido en ítems distintos (cajas distintas, mismo CUST REF ITEM NO)
     → consolidados: se suma cantidad y precio_total, se recalcula precio_unitario
   - Sufijos de origen: J=México, L=Italia, T=Canadá, sin sufijo=USA
+  - Sufijos de origen entre paréntesis: (=China, )=Thailand (ej: 541-7108()
+  - Sufijos multi-letra: VN=Vietnam (ej: 9M-5894VN)
   - Página 1 sin SHIPMENT → se ignora automáticamente
   - Fecha e invoice number en línea de datos (no en línea de etiquetas)
 """
@@ -28,13 +30,69 @@ def _n(s: str) -> float:
         return 0.0
 
 
-ORIGEN_SUFIJO = {"J": "MEXICO", "L": "ITALY", "T": "CANADA"}
+# Sufijos de una sola letra al final del código (antes de paréntesis)
+ORIGEN_SUFIJO = {
+    "J":  "MEXICO",
+    "L":  "ITALY",
+    "T":  "CANADA",
+    "N":  "GERMANY",
+    "P":  "INDIA",
+    "VN": "VIETNAM",  # dos letras — se chequea primero
+}
 
 def _origen(part_raw: str) -> str:
-    m = re.search(r"([A-Z])$", part_raw.strip())
+    """
+    Determina país de origen según sufijo del código de parte CAT.
+    Sufijos:
+      (  → China
+      )  → Thailand
+      J  → Mexico
+      N  → Germany
+      P  → India
+      VN → Vietnam
+      L  → Italy
+      T  → Canada
+      sin sufijo → USA
+    """
+    s = part_raw.strip()
+
+    # Paréntesis de China / Thailand (pueden venir solos o tras letras)
+    if s.endswith("("):
+        return "CHINA"
+    if s.endswith(")"):
+        return "THAILAND"
+
+    # Quitar cualquier paréntesis residual y revisar sufijos de letras
+    s_clean = s.rstrip("()")
+
+    # Vietnam primero (2 letras)
+    if s_clean.upper().endswith("VN"):
+        return "VIETNAM"
+
+    # Sufijos de una letra
+    m = re.search(r"([A-Z])$", s_clean)
     if m and m.group(1) in ORIGEN_SUFIJO:
         return ORIGEN_SUFIJO[m.group(1)]
+
     return "USA"
+
+
+def _limpiar_codigo(part_raw: str) -> str:
+    """
+    Elimina sufijos de origen del código para obtener el código base.
+    Ej: '541-7108(' → '541-7108'  |  '9M-5894VN' → '9M-5894'  |  '377-6969J' → '377-6969'
+    """
+    s = part_raw.strip()
+    # Quitar paréntesis de China/Thailand
+    s = s.rstrip("()")
+    # Quitar sufijo VN (Vietnam)
+    if s.upper().endswith("VN"):
+        s = s[:-2]
+    # Quitar sufijos de una letra (J, N, P, L, T) — solo si quedan chars antes
+    elif re.search(r"[A-Z]$", s) and len(s) > 1:
+        if s[-1] in ORIGEN_SUFIJO:
+            s = s[:-1]
+    return s.strip("-")
 
 
 # ── Regex ─────────────────────────────────────────────────────────────────────
@@ -42,27 +100,28 @@ def _origen(part_raw: str) -> str:
 # Línea de datos del encabezado (contiene número factura y fecha):
 # '  R06C         Z 95  046355  29APR26     IC  ...'
 RE_DATOS_CABECERA = re.compile(
-    r"R06C\s+([A-Z]\s*\d{2}\s*\d{6})\s+(\d{2}[A-Z]{3}\d{2,4})"
+    r"R06[CL]\s+([A-Z]\s*\d{2}\s*\d{6})\s+(\d{2}[A-Z]{3}\d{2,4})"
 )
 
 # Línea de ítem:
 # '      1      1 AA 125-4527J  VA          PUMP GP          5,263.06     5,263.06 '
-# grupos: item_num | qty | tipo(AA) | part | sufijo_desc | descripcion | unit | extended
+# '      5  1,000 AA 541-7108(  QC          HOSE BK          0.07         70.00    '
+# grupos: item_num | qty | part_raw | sufijo_desc | descripcion | unit | extended
 RE_ITEM = re.compile(
     r"^\s{2,8}"
-    r"(\d{1,3})"             # item#
+    r"(\d{1,3})"              # item#
     r"\s+"
-    r"([\d,]+)"              # qty
-    r"\s+AA\s+"              # tipo fijo AA
-    r"([\w\-]+)"             # código de parte (con posible sufijo J/L/T)
+    r"([\d,]+)"               # qty
+    r"\s+AA\s+"               # tipo fijo AA
+    r"([\w\-]+[()]*)"         # código de parte + sufijo origen opcional ( ) J VN etc.
     r"\s+"
-    r"([A-Z]{2})"            # sufijo descriptivo (VA, QC, JA, CM...)
+    r"([A-Z]{2})"             # sufijo descriptivo (VA, QC, JA, CM...)
     r"\s{2,}"
-    r"(.+?)"                 # descripción
+    r"(.+?)"                  # descripción
     r"\s{2,}"
-    r"([\d,]+\.\d{2})"      # unit price
+    r"([\d,]+\.\d{2})"       # unit price
     r"\s+"
-    r"([\d,]+\.\d{2})"      # extended price
+    r"([\d,]+\.\d{2})"       # extended price
     r"\s*$"
 )
 
@@ -127,12 +186,16 @@ def extraer_factura_cat(pdf_bytes: bytes) -> dict:
             if not m:
                 continue
 
-            item_num   = int(m.group(1))
-            qty        = _n(m.group(2))
-            part_raw   = m.group(3).strip()
-            descripcion = (m.group(4) + " " + m.group(5)).strip()
+            item_num    = int(m.group(1))
+            qty         = _n(m.group(2))
+            part_raw    = m.group(3).strip()          # incluye sufijo de origen
+            sufijo_desc = m.group(4).strip()
+            descripcion = (sufijo_desc + " " + m.group(5)).strip()
             unit_price  = _n(m.group(6))
             extended    = _n(m.group(7))
+
+            origen      = _origen(part_raw)
+            codigo_base = _limpiar_codigo(part_raw)   # sin sufijo de origen
 
             # Buscar CUST REF ITEM NO en las 3 líneas siguientes
             cust_ref = ""
@@ -144,15 +207,15 @@ def extraer_factura_cat(pdf_bytes: bytes) -> dict:
 
             items_raw.append({
                 "numero_item":        item_num,
-                "codigo_parte":       part_raw,
+                "codigo_parte":       codigo_base,    # código limpio, sin sufijo
                 "descripcion":        descripcion,
                 "cantidad":           qty,
                 "precio_unitario":    unit_price,
                 "precio_total_parte": extended,
                 "cargos_propios":     0.0,
                 "subtotal":           extended,
-                "origen":             _origen(part_raw),
-                "_cust_ref":          cust_ref,  # campo interno para consolidar
+                "origen":             origen,
+                "_cust_ref":          cust_ref,
             })
 
     doc.close()
@@ -185,7 +248,6 @@ def _consolidar(items_raw: list) -> list:
     Solo elimina duplicados exactos (mismo código + misma cantidad + mismo subtotal).
     Consolida únicamente cuando el CUST REF ITEM NO es el mismo (mismo ítem de orden).
     """
-    # Paso 1: consolidar solo por CUST REF ITEM NO (mismo ítem de la orden CAT)
     grupos: dict = {}
     orden: list = []
 
