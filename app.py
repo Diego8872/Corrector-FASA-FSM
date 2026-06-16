@@ -98,6 +98,12 @@ if analizar:
             df_subitems = di_data.get("subitems", pd.DataFrame())
             df_liq = di_data.get("liquidacion", pd.DataFrame())
             caratula = di_data.get("caratula", {})
+            # Leer solapa Carátula como DataFrame para extraer números de factura
+            try:
+                di_file.seek(0)
+                df_caratula = pd.read_excel(di_file, sheet_name="Carátula", header=None, dtype=str)
+            except Exception:
+                df_caratula = None
             st.write(f"   ✅ {len(df_items)} ítems leídos")
         except Exception as e:
             st.error(f"Error leyendo el DI: {e}")
