@@ -129,52 +129,9 @@ IMPORTANTE:
 # ─── EXTRACCIÓN CM (CE + RE) ──────────────────────────────────────────────────
 
 def extraer_cm(pdf_ce_bytes: bytes, pdf_re_bytes: bytes) -> dict:
-    system = """Sos un experto en comercio exterior argentino especializado en 
-Certificados Mineros (Ley 24.196). Extraés datos con precisión absoluta.
-Respondé SOLO con JSON válido, sin texto adicional."""
-
-    prompt = """Analizá estos dos documentos del Certificado Minero:
-1. CE (Certificado de Autorización de Importación)  
-2. RE (Solicitud/Resolución con el detalle de mercadería)
-
-Extraé los datos en formato JSON:
-{
-  "numero_ce": "...",
-  "numero_re": "...",
-  "empresa": "...",
-  "cuit": "...",
-  "fecha_emision": "...",
-  "validez_dias": 180,
-  "numero_factura": "...",
-  "fob_total": 0.0,
-  "items": [
-    {
-      "ncm": "...",
-      "ncm_8_digitos": "...",
-      "descripcion": "...",
-      "codigo_parte": "...",
-      "cantidad": 0,
-      "unidad": "...",
-      "valor_unitario_fob": 0.0,
-      "valor_total_fob": 0.0,
-      "marca": "...",
-      "origen": "..."
-    }
-  ]
-}
-
-IMPORTANTE:
-- ncm_8_digitos: solo los primeros 8 dígitos del NCM (sin puntos)
-- codigo_parte: el código de parte exacto como figura en el documento
-- Los datos de los ítems están en el RE, no en el CE
-- El CE contiene datos generales (empresa, número, fecha)"""
-
-    try:
-        texto = _llamar_claude(system, prompt, [pdf_ce_bytes, pdf_re_bytes],
-                               modelo="claude-haiku-4-5", max_tokens=8192)
-        return _parse_json(texto)
-    except Exception as e:
-        return {"error": str(e)}
+    """Extrae CM usando PyMuPDF + regex. Sin API, sin costo."""
+    from utils.parser_cm import extraer_cm as _extraer_cm
+    return _extraer_cm(pdf_ce_bytes, pdf_re_bytes)
 
 
 # ─── EXTRACCIÓN DJ ORIGEN NO PREFERENCIAL ────────────────────────────────────
