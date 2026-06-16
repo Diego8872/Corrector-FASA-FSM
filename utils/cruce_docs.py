@@ -357,7 +357,11 @@ def validar_dj_origen(df_items: pd.DataFrame, df_subitems: pd.DataFrame, datos_d
                     modelo_di = normalizar_codigo(str(srow.get("MODELO", "")))
                     codigo_dj_norm = normalizar_codigo(codigo_dj)
                     if modelo_di == codigo_dj_norm:
-                        items_match.append((item_num, irow, srow))
+                        # Matchear también por cantidad para evitar cruces erróneos
+                        # cuando el mismo código aparece en varios ítems
+                        qty_item = safe_float(irow.get("CANTIDAD", 0))
+                        if qty_item == qty_dj:
+                            items_match.append((item_num, irow, srow))
 
             if not items_match:
                 resultados.append({
