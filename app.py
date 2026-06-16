@@ -105,14 +105,14 @@ if analizar:
 
         # ── 2. Validaciones sin API ───────────────────────────────────────
         st.write("🔎 Validando campos del DI...")
-        todos_resultados.extend(validar_items(df_items))
-        todos_resultados.extend(validar_subitems(df_subitems))
+        todos_resultados.extend(validar_items(df_items, df_subitems))
+        todos_resultados.extend(validar_subitems(df_subitems, df_items))
 
         fob_total = df_items["VALOR FOB"].apply(safe_float).sum() if "VALOR FOB" in df_items.columns else 0
         flete_total_di = df_items["FLETE EN DIV"].apply(safe_float).sum() if "FLETE EN DIV" in df_items.columns else 0
         seguro_total_di = df_items["SEGURO EN DIV"].apply(safe_float).sum() if "SEGURO EN DIV" in df_items.columns else 0
 
-        todos_resultados.extend(validar_prorrateo(df_items, fob_total, flete_total_di, seguro_total_di))
+        todos_resultados.extend(validar_prorrateo(df_items, fob_total, flete_total_di, seguro_total_di, df_subitems))
         if not df_liq.empty:
             todos_resultados.extend(validar_liquidacion(df_liq, df_items, df_subitems))
         st.write(f"   ✅ {len(todos_resultados)} resultados")
@@ -122,7 +122,7 @@ if analizar:
             st.write("📑 Validando NCM...")
             try:
                 df_ncm = pd.read_excel(ncm_file, dtype=str)
-                todos_resultados.extend(validar_ncm_excel(df_subitems, df_ncm))
+                todos_resultados.extend(validar_ncm_excel(df_subitems, df_ncm, df_items))
                 st.write("   ✅ NCM validados")
             except Exception as e:
                 st.write(f"   ❌ Error NCM: {e}")
