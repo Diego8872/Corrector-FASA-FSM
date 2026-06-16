@@ -69,6 +69,9 @@ def _leer_items(xl, sheet_name) -> pd.DataFrame:
     df = xl.parse(sheet_name, dtype=str)
     df.columns = [str(c).strip().upper() for c in df.columns]
     df = df.fillna("")
+    # Filtrar filas sin número de ítem (filas vacías al final del Excel)
+    if "ITEM" in df.columns:
+        df = df[df["ITEM"].str.strip() != ""]
     return df
 
 
