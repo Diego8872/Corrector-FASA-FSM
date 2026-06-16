@@ -48,51 +48,9 @@ def _parse_json(texto: str) -> dict | list:
 # ─── EXTRACCIÓN FACTURA ───────────────────────────────────────────────────────
 
 def extraer_factura(pdf_bytes: bytes) -> dict:
-    system = """Sos un experto en comercio exterior argentino. 
-Analizás facturas comerciales de Caterpillar y extraés datos con precisión absoluta.
-Respondé SOLO con JSON válido, sin texto adicional."""
-
-    prompt = """Analizá esta factura y extraé los siguientes datos en formato JSON:
-{
-  "numero_factura": "...",
-  "fecha": "...",
-  "vendedor": "...",
-  "moneda": "...",
-  "incoterm": "...",
-  "items": [
-    {
-      "numero_item": 1,
-      "codigo_parte": "...",
-      "descripcion": "...",
-      "cantidad": 0,
-      "precio_unitario": 0.0,
-      "precio_total_parte": 0.0,
-      "cargos_propios": 0.0,
-      "subtotal": 0.0,
-      "origen": "..."
-    }
-  ],
-  "total_partes": 0.0,
-  "total_cargos": 0.0,
-  "total_factura": 0.0,
-  "cargos_globales": 0.0,
-  "tipo_cargos": "por_item | global | mixto"
-}
-
-IMPORTANTE:
-- codigo_parte: el número de parte sin guiones ni sufijos
-- precio_total_parte: precio de partes sin cargos adicionales
-- cargos_propios: cargos asignados específicamente a este ítem (freight, emergency fill, etc.)
-- subtotal: precio_total_parte + cargos_propios
-- total_cargos: suma de TODOS los cargos de la factura
-- tipo_cargos: 'por_item' si cada ítem tiene sus propios cargos, 'global' si el cargo está solo al final, 'mixto' si hay ambos
-- Si un ítem no tiene cargos propios, cargos_propios = 0"""
-
-    try:
-        texto = _llamar_claude(system, prompt, [pdf_bytes])
-        return _parse_json(texto)
-    except Exception as e:
-        return {"error": str(e)}
+    """Extrae factura CAT usando PyMuPDF + regex. Sin API, sin costo."""
+    from utils.parser_factura_cat import extraer_factura_cat
+    return extraer_factura_cat(pdf_bytes)
 
 
 # ─── EXTRACCIÓN FORWARDING INVOICE ───────────────────────────────────────────
