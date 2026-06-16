@@ -56,6 +56,8 @@ def validar_cm_vs_di(df_items: pd.DataFrame, df_subitems: pd.DataFrame, datos_cm
 
             for _, subrow in sub.iterrows():
                 modelo_di = normalizar_codigo(subrow.get("MODELO", ""))
+                if not modelo_di:
+                    continue
                 ncm_di_raw = subrow.get("NCM", "").replace(".", "").strip()
                 ncm_di_8 = ncm_di_raw[:8] if len(ncm_di_raw) >= 8 else ncm_di_raw
                 cantidad_di = safe_float(subrow.get("CANTIDAD", 0))
@@ -145,36 +147,55 @@ def validar_factura_vs_di(df_items: pd.DataFrame, df_subitems: pd.DataFrame, dat
         modelo_di = normalizar_codigo(subrow.get("MODELO", ""))
         fob_di = safe_float(subrow.get("MONTO FOB", 0))
 
-        # Buscar en todas las facturas
+        # Ignorar filas sin código de parte o sin ítem
+        if not modelo_di or not item_num or item_num == "0000":
+            continue
+
+        # Buscar en todas las facturas — matchear por código Y cantidad
+        cantidad_di = safe_float(subrow.get("CANTIDAD", 0))
         encontrado = False
         for nro_factura, fac_data in datos_facturas.items():
             if "error" in fac_data:
                 continue
-            for item_fac in fac_data.get("items", []):
+            # Buscar primero por código + cantidad exacta; si no, por código solo
+            items_factura = fac_data.get("items", [])
+            match_fac = None
+            for item_fac in items_factura:
                 codigo_fac = normalizar_codigo(item_fac.get("codigo_parte", ""))
-                if codigo_fac == modelo_di:
-                    encontrado = True
-                    tipo_cargos = fac_data.get("tipo_cargos", "por_item")
-                    
-                    if tipo_cargos == "por_item":
-                        fob_esperado = safe_float(item_fac.get("subtotal", 0))
-                    else:
-                        # Prorrateo global
-                        total_partes = safe_float(fac_data.get("total_partes", 0))
-                        total_cargos = safe_float(fac_data.get("total_cargos", 0))
-                        precio_parte = safe_float(item_fac.get("precio_total_parte", 0))
-                        proporcion = precio_parte / total_partes if total_partes else 0
-                        fob_esperado = round(precio_parte + (total_cargos * proporcion), 2)
-
-                    if abs(fob_di - fob_esperado) > TOLERANCIA_FOB:
-                        resultados.append(alerta(
-                            item_num, "MONTO FOB (FACTURA)",
-                            f"FOB DI: {fob_di:.2f} — FOB calculado desde factura: {fob_esperado:.2f} (dif: {abs(fob_di - fob_esperado):.2f})",
-                            "ALERTA"
-                        ))
-                    else:
-                        resultados.append(ok(item_num, "MONTO FOB (FACTURA)", f"FOB correcto vs factura: {fob_di:.2f}"))
+                qty_fac = safe_float(item_fac.get("cantidad", 0))
+                if codigo_fac == modelo_di and abs(qty_fac - cantidad_di) < 0.01:
+                    match_fac = item_fac
                     break
+            # Fallback: solo por código
+            if not match_fac:
+                for item_fac in items_factura:
+                    if normalizar_codigo(item_fac.get("codigo_parte", "")) == modelo_di:
+                        match_fac = item_fac
+                        break
+
+            if match_fac:
+                encontrado = True
+                tipo_cargos = fac_data.get("tipo_cargos", "por_item")
+
+                if tipo_cargos == "por_item":
+                    fob_esperado = safe_float(match_fac.get("subtotal", 0))
+                else:
+                    total_partes = safe_float(fac_data.get("total_partes", 0))
+                    total_cargos = safe_float(fac_data.get("total_cargos", 0))
+                    precio_parte = safe_float(match_fac.get("precio_total_parte", 0))
+                    proporcion = precio_parte / total_partes if total_partes else 0
+                    fob_esperado = round(precio_parte + (total_cargos * proporcion), 2)
+
+                codigo_ref = match_fac.get("codigo_parte", modelo_di)
+                if abs(fob_di - fob_esperado) > TOLERANCIA_FOB:
+                    resultados.append(alerta(
+                        item_num, "MONTO FOB (FACTURA)",
+                        f"FOB DI: {fob_di:.2f} — FOB calculado desde factura: {fob_esperado:.2f} (dif: {abs(fob_di - fob_esperado):.2f}) | Código: {codigo_ref} | Factura: {nro_factura}",
+                        "ALERTA"
+                    ))
+                else:
+                    resultados.append(ok(item_num, "MONTO FOB (FACTURA)", f"FOB correcto vs factura: {fob_di:.2f} | Código: {codigo_ref} | Factura: {nro_factura}"))
+                break
 
         if not encontrado:
             resultados.append(alerta(
