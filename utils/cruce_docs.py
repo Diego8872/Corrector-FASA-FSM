@@ -127,7 +127,7 @@ def validar_cm_vs_di(df_items: pd.DataFrame, df_subitems: pd.DataFrame, datos_cm
                 if abs(fob_di - fob_cm) > TOLERANCIA_FOB:
                     resultados.append(alerta(
                         item_num, "MONTO FOB",
-                        f"[CM: {numero_cm}] FOB DI: {fob_di:.2f} — CM: {fob_cm:.2f} (dif: {abs(fob_di - fob_cm):.2f})",
+                        f"[CM: {numero_cm}] Código: {item_cm.get('codigo_parte','')} | FOB DI: {fob_di:.2f} — CM: {fob_cm:.2f} (dif: {abs(fob_di - fob_cm):.2f})",
                         "ALERTA"
                     ))
                 else:
