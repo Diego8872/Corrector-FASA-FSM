@@ -226,25 +226,25 @@ def _parsear_bloque(lineas: list) -> dict | None:
 
 def _consolidar_re(items_raw: list) -> list:
     """
-    Consolida ítems con mismo código de parte y mismo NCM.
-    Suma cantidad y valor_total, recalcula valor_unitario.
+    NO consolida — preserva cada entrada del RE como ítem separado.
+    El mismo código puede aparecer varias veces con distintas cantidades/valores
+    porque corresponde a distintos ítems del DI.
+    Solo elimina duplicados exactos (mismo código + misma cantidad + mismo valor_total).
     """
-    grupos = {}
-    orden = []
+    vistos = set()
+    resultado = []
 
     for item in items_raw:
-        key = (item["codigo_parte"].upper(), item["ncm_8_digitos"])
-        if key not in grupos:
-            grupos[key] = item.copy()
-            orden.append(key)
-        else:
-            g = grupos[key]
-            g["cantidad"]       += item["cantidad"]
-            g["valor_total_fob"] += item["valor_total_fob"]
-            if g["cantidad"] > 0:
-                g["valor_unitario_fob"] = g["valor_total_fob"] / g["cantidad"]
+        key = (
+            item["codigo_parte"].upper(),
+            item["ncm_8_digitos"],
+            item["cantidad"],
+            item["valor_total_fob"],
+        )
+        if key not in vistos:
+            vistos.add(key)
+            resultado.append(item.copy())
 
-    resultado = [grupos[k] for k in orden]
     for idx, it in enumerate(resultado, 1):
         it["numero_item"] = idx
 
