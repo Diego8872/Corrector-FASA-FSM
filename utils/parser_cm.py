@@ -70,11 +70,11 @@ def _parsear_ce(pdf_bytes: bytes) -> dict:
 
     m = RE_NUM_CE.search(texto)
     if m:
-        numero_ce = m.group(0).replace("#", "_")
+        numero_ce = m.group(0)
 
     m = RE_NUM_RE.search(texto)
     if m:
-        numero_re = m.group(0).replace("#", "_")
+        numero_re = m.group(0)
 
     m = RE_FECHA_CE.search(texto)
     if m:
@@ -117,7 +117,7 @@ def _parsear_re(pdf_bytes: bytes) -> dict:
         if not numero_re:
             m = RE_NUM_RE.search(l)
             if m:
-                numero_re = m.group(0).replace("#", "_")
+                numero_re = m.group(0)
         if not fob_total:
             m = RE_FOB_TOT.search(l)
             if m:
