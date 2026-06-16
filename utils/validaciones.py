@@ -32,20 +32,35 @@ def _ref(modelo: str = "", factura: str = "", cm: str = "") -> str:
         partes.append(f"CM: {cm}")
     return (" | " + " | ".join(partes)) if partes else ""
 
-def _build_ref_map(df_items: pd.DataFrame, df_subitems: pd.DataFrame) -> dict:
+def _build_ref_map(df_items: pd.DataFrame, df_subitems: pd.DataFrame, df_caratula: pd.DataFrame = None) -> dict:
     """
-    Construye dict {item_zfill4: {modelo, factura, cm}} 
-    combinando info de Item y Subitem.
+    Construye dict {item_zfill4: {modelo, factura, cm}}
+    combinando info de Item, Subitem y Carátula.
+    La factura se obtiene del CM declarado en el ítem cruzado con la Carátula.
     """
+    # Leer facturas de la Carátula si está disponible
+    facturas_caratula = []
+    if df_caratula is not None:
+        try:
+            for _, row in df_caratula.iterrows():
+                for val in row.values:
+                    s = str(val).strip()
+                    if s.startswith("Z9") and len(s) >= 8:
+                        facturas_caratula.append(s)
+        except Exception:
+            pass
+
     ref = {}
     if df_items is not None:
         for _, row in df_items.iterrows():
             item = str(row.get("ITEM", "")).strip().zfill(4)
-            ref[item] = {
-                "factura": str(row.get("D:NRO-FACTURA", row.get("D:FACTURA", ""))).strip(),
-                "cm":      str(row.get("D:CERTSM", "")).strip(),
-                "modelo":  "",
-            }
+            cm = str(row.get("D:CERTSM", "")).strip()
+            # Factura: buscar en columna directa o usar lista de carátula
+            factura = str(row.get("D:NRO-FACTURA", row.get("D:FACTURA", ""))).strip()
+            if not factura and facturas_caratula:
+                factura = ", ".join(facturas_caratula)
+            ref[item] = {"factura": factura, "cm": cm, "modelo": ""}
+
     if df_subitems is not None:
         for _, row in df_subitems.iterrows():
             item = str(row.get("ITEM", "")).strip().zfill(4)
@@ -54,12 +69,13 @@ def _build_ref_map(df_items: pd.DataFrame, df_subitems: pd.DataFrame) -> dict:
                 if modelo and not ref[item]["modelo"]:
                     ref[item]["modelo"] = modelo
             else:
-                ref[item] = {"factura": "", "cm": "", "modelo": modelo}
+                factura = ", ".join(facturas_caratula) if facturas_caratula else ""
+                ref[item] = {"factura": factura, "cm": "", "modelo": modelo}
     return ref
 
 
-def validar_items(df_items: pd.DataFrame, df_subitems: pd.DataFrame = None) -> list:
-    ref_map = _build_ref_map(df_items, df_subitems)
+def validar_items(df_items: pd.DataFrame, df_subitems: pd.DataFrame = None, df_caratula: pd.DataFrame = None) -> list:
+    ref_map = _build_ref_map(df_items, df_subitems, df_caratula)
     resultados = []
     for _, row in df_items.iterrows():
         item = str(row.get("ITEM", "?")).strip().zfill(4)
@@ -123,8 +139,8 @@ def validar_items(df_items: pd.DataFrame, df_subitems: pd.DataFrame = None) -> l
     return resultados
 
 
-def validar_subitems(df_subitems: pd.DataFrame, df_items: pd.DataFrame = None) -> list:
-    ref_map = _build_ref_map(df_items, df_subitems)
+def validar_subitems(df_subitems: pd.DataFrame, df_items: pd.DataFrame = None, df_caratula: pd.DataFrame = None) -> list:
+    ref_map = _build_ref_map(df_items, df_subitems, df_caratula)
     resultados = []
     for _, row in df_subitems.iterrows():
         item = str(row.get("ITEM", "?")).strip().zfill(4)
@@ -136,9 +152,9 @@ def validar_subitems(df_subitems: pd.DataFrame, df_items: pd.DataFrame = None) -
     return resultados
 
 
-def validar_liquidacion(df_liq: pd.DataFrame, df_items: pd.DataFrame, df_subitems: pd.DataFrame) -> list:
+def validar_liquidacion(df_liq: pd.DataFrame, df_items: pd.DataFrame, df_subitems: pd.DataFrame, df_caratula: pd.DataFrame = None) -> list:
     resultados = []
-    ref_map = _build_ref_map(df_items, df_subitems)
+    ref_map = _build_ref_map(df_items, df_subitems, df_caratula)
 
     cm_por_item = {}
     estado_por_item = {}
@@ -253,8 +269,8 @@ def validar_liquidacion(df_liq: pd.DataFrame, df_items: pd.DataFrame, df_subitem
     return resultados
 
 
-def validar_prorrateo(df_items: pd.DataFrame, fob_total: float, flete_total: float, seguro_total: float, df_subitems: pd.DataFrame = None) -> list:
-    ref_map = _build_ref_map(df_items, df_subitems)
+def validar_prorrateo(df_items: pd.DataFrame, fob_total: float, flete_total: float, seguro_total: float, df_subitems: pd.DataFrame = None, df_caratula: pd.DataFrame = None) -> list:
+    ref_map = _build_ref_map(df_items, df_subitems, df_caratula)
     resultados = []
     if not fob_total:
         return resultados
@@ -275,8 +291,8 @@ def validar_prorrateo(df_items: pd.DataFrame, fob_total: float, flete_total: flo
     return resultados
 
 
-def validar_ncm_excel(df_subitems: pd.DataFrame, df_ncm: pd.DataFrame, df_items: pd.DataFrame = None) -> list:
-    ref_map = _build_ref_map(df_items, df_subitems)
+def validar_ncm_excel(df_subitems: pd.DataFrame, df_ncm: pd.DataFrame, df_items: pd.DataFrame = None, df_caratula: pd.DataFrame = None) -> list:
+    ref_map = _build_ref_map(df_items, df_subitems, df_caratula)
     resultados = []
     if df_ncm is None or df_ncm.empty:
         return resultados
