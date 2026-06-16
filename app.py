@@ -175,10 +175,15 @@ if analizar:
                     datos_dj.append({"error": str(e)})
                     st.write(f"   ❌ {dj_file.name}: {e}")
 
-        # ── 8. API: CMs en paralelo ───────────────────────────────────────
+        # ── 8. CMs en paralelo (con caché de sesión) ─────────────────────
         datos_cm = {}
         if ce_files:
-            st.write(f"📜 Procesando {len(ce_files)} CM(s) en paralelo...")
+            # Inicializar caché en session_state
+            if "cache_cm" not in st.session_state:
+                st.session_state["cache_cm"] = {}
+            cache_cm = st.session_state["cache_cm"]
+
+            st.write(f"📜 Procesando {len(ce_files)} CM(s)...")
 
             # Preparar pares CE+RE
             pares_cm = {}
@@ -198,7 +203,18 @@ if analizar:
                 else:
                     st.write(f"   ⚠️ {numero_ce}: No se encontró el RE ({numero_re_completo})")
 
-            # Procesar en paralelo
+            # Separar CMs cacheados vs a procesar
+            pares_nuevos = {}
+            for numero_completo, datos_par in pares_cm.items():
+                if numero_completo in cache_cm:
+                    datos_cm[numero_completo] = cache_cm[numero_completo]
+                    _, _, numero_ce, num_re = datos_par
+                    n_items = len(cache_cm[numero_completo].get("items", []))
+                    st.write(f"   ⚡ {numero_ce} (caché) | {n_items} ítems")
+                else:
+                    pares_nuevos[numero_completo] = datos_par
+
+            # Procesar en paralelo solo los nuevos
             def procesar_cm(args):
                 numero_completo, (ce_bytes, re_bytes, numero_ce, num_re) = args
                 try:
@@ -207,15 +223,18 @@ if analizar:
                 except Exception as e:
                     return numero_completo, {"error": str(e)}, numero_ce, num_re, str(e)
 
-            with ThreadPoolExecutor(max_workers=2) as executor:
-                futures = {executor.submit(procesar_cm, item): item for item in pares_cm.items()}
-                for future in as_completed(futures):
-                    numero_completo, datos, numero_ce, num_re, error = future.result()
-                    datos_cm[numero_completo] = datos
-                    if error:
-                        st.write(f"   ❌ {numero_ce}: {error}")
-                    else:
-                        st.write(f"   ✅ {numero_ce} → RE: {num_re} | {len(datos.get('items', []))} ítems")
+            if pares_nuevos:
+                with ThreadPoolExecutor(max_workers=2) as executor:
+                    futures = {executor.submit(procesar_cm, item): item for item in pares_nuevos.items()}
+                    for future in as_completed(futures):
+                        numero_completo, datos, numero_ce, num_re, error = future.result()
+                        datos_cm[numero_completo] = datos
+                        if error:
+                            st.write(f"   ❌ {numero_ce}: {error}")
+                        else:
+                            # Guardar en caché solo si fue exitoso
+                            cache_cm[numero_completo] = datos
+                            st.write(f"   ✅ {numero_ce} → RE: {num_re} | {len(datos.get('items', []))} ítems")
 
         # ── 9. Cruces ─────────────────────────────────────────────────────
         st.write("🔀 Cruzando datos...")
