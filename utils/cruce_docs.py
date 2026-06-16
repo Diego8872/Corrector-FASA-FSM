@@ -268,12 +268,45 @@ def _buscar_caratula(caratula: dict, campo: str) -> str | None:
     return None
 
 
-def validar_dj_origen(df_items: pd.DataFrame, datos_dj: list) -> list:
+def validar_dj_origen(df_items: pd.DataFrame, df_subitems: pd.DataFrame, datos_dj: list) -> list:
     """
-    Valida que los ítems con D:DJ-ORIG-NOPREFER tengan el PDF de DJ subido
-    y que el número IF coincida.
+    Cruza DJ de Origen No Preferencial contra ítems del DI.
+    Por cada producto de la DJ busca el ítem del DI con mismo código de parte
+    y valida: NCM 8 dígitos, últimos 3 SIM, país de origen, unidad, cantidad, CIF unitario.
     """
+    from utils.parser_di import normalizar_codigo, safe_float
+    TOLERANCIA_CIF = 0.10  # 10 centavos de tolerancia
+
     resultados = []
+
+    # Mapeo de países DJ → códigos ORIGEN del DI
+    PAISES = {
+        "ESTADOS UNIDOS": ["212", "ESTADOS UNIDOS"],
+        "CHINA":          ["156", "CHINA"],
+        "MEXICO":         ["484", "MEXICO", "MÉXICO"],
+        "ITALIA":         ["380", "ITALIA"],
+        "CANADA":         ["124", "CANADA", "CANADÁ"],
+        "INDIA":          ["356", "INDIA"],
+        "ALEMANIA":       ["276", "ALEMANIA"],
+        "JAPON":          ["392", "JAPON", "JAPÓN"],
+        "BRASIL":         ["076", "BRASIL"],
+    }
+
+    def pais_coincide(pais_dj: str, origen_di: str) -> bool:
+        pais_dj = pais_dj.upper().strip()
+        origen_di = origen_di.upper().strip()
+        for _, variantes in PAISES.items():
+            if any(v in pais_dj for v in variantes):
+                if any(v in origen_di for v in variantes):
+                    return True
+        # Fallback: texto directo
+        return pais_dj in origen_di or origen_di in pais_dj
+
+    def unidad_coincide(unidad_dj: str, unidad_di: str) -> bool:
+        """UNIDAD → 07 - UNIDAD, KILOGRAMO → 01 - KILOGRAMO, etc."""
+        ud = unidad_dj.upper().strip()
+        udi = unidad_di.upper().strip()
+        return ud in udi or udi.split("- ")[-1].strip() in ud
 
     # Extraer números IF de los PDFs subidos
     ifs_subidos = []
@@ -281,40 +314,123 @@ def validar_dj_origen(df_items: pd.DataFrame, datos_dj: list) -> list:
         if "error" not in dj and dj.get("numero_if"):
             ifs_subidos.append(dj["numero_if"].strip().upper())
 
+    # ── Verificar que cada ítem con DJ tenga su PDF subido ──
     for _, row in df_items.iterrows():
         item = str(row.get("ITEM", "")).strip().zfill(4)
         dj_campo = row.get("D:DJ-ORIG-NOPREFER", "").strip()
-
         if not dj_campo:
             continue
 
-        # El ítem tiene DJ declarada — verificar que el PDF esté subido
-        if not ifs_subidos:
-            resultados.append({
-                "item": item,
-                "campo": "D:DJ-ORIG-NOPREFER",
-                "mensaje": f"DJ declarada '{dj_campo}' pero no se subió ningún PDF de DJ de origen",
-                "nivel": "ERROR"
-            })
-            continue
-
-        # Verificar que el número IF del campo coincida con algún PDF subido
         dj_upper = dj_campo.upper()
         coincide = any(dj_upper in if_sub or if_sub in dj_upper for if_sub in ifs_subidos)
 
-        if not coincide:
-            resultados.append({
-                "item": item,
-                "campo": "D:DJ-ORIG-NOPREFER",
-                "mensaje": f"DJ '{dj_campo}' no coincide con ningún PDF subido ({', '.join(ifs_subidos)})",
-                "nivel": "ERROR"
-            })
-        else:
-            resultados.append({
-                "item": item,
-                "campo": "D:DJ-ORIG-NOPREFER",
-                "mensaje": f"DJ verificada: {dj_campo}",
-                "nivel": "OK"
-            })
+        if not ifs_subidos or not coincide:
+            msg = (f"DJ declarada '{dj_campo}' pero no se subió ningún PDF de DJ"
+                   if not ifs_subidos else
+                   f"DJ '{dj_campo}' no coincide con ningún PDF subido ({', '.join(ifs_subidos)})")
+            resultados.append({"item": item, "campo": "D:DJ-ORIG-NOPREFER",
+                                "mensaje": msg, "nivel": "ERROR"})
+
+    # ── Cruce detallado por producto de la DJ ──
+    for dj_data in datos_dj:
+        if "error" in dj_data:
+            continue
+        numero_if = dj_data.get("numero_if", "")
+        for prod in dj_data.get("productos", []):
+            codigo_dj = prod["codigo_parte"].strip()
+            ncm8_dj   = prod["ncm_8_digitos"].strip().replace(".", "")
+            sim3_dj   = prod["ncm_sim_3"].strip()
+            pais_dj   = prod["pais_origen"].strip()
+            unidad_dj = prod["unidad_medida"].strip()
+            qty_dj    = prod["cantidad"]
+            cif_dj    = prod["valor_cif_unit"]
+
+            # Buscar ítems del DI con este código de parte que tengan la DJ
+            items_match = []
+            for _, irow in df_items.iterrows():
+                dj_campo = irow.get("D:DJ-ORIG-NOPREFER", "").strip()
+                if not dj_campo or numero_if.upper() not in dj_campo.upper():
+                    continue
+                item_num = str(irow.get("ITEM", "")).strip().zfill(4)
+                sub = df_subitems[df_subitems["ITEM"].str.zfill(4) == item_num]
+                for _, srow in sub.iterrows():
+                    modelo_di = normalizar_codigo(str(srow.get("MODELO", "")))
+                    codigo_dj_norm = normalizar_codigo(codigo_dj)
+                    if modelo_di == codigo_dj_norm:
+                        items_match.append((item_num, irow, srow))
+
+            if not items_match:
+                resultados.append({
+                    "item": "GENERAL", "campo": "DJ-ORIG",
+                    "mensaje": f"[DJ {numero_if}] Código '{codigo_dj}' no encontrado en ningún ítem del DI con esta DJ",
+                    "nivel": "ERROR"
+                })
+                continue
+
+            for item_num, irow, srow in items_match:
+                # ── NCM 8 dígitos ──
+                ncm_di = str(srow.get("NCM", "")).replace(".", "").strip()
+                ncm8_di = ncm_di[:8]
+                if ncm8_di != ncm8_dj:
+                    resultados.append({"item": item_num, "campo": "DJ NCM 8D",
+                        "mensaje": f"NCM DJ ({ncm8_dj}) ≠ DI ({ncm8_di})", "nivel": "ERROR"})
+                else:
+                    resultados.append({"item": item_num, "campo": "DJ NCM 8D",
+                        "mensaje": f"NCM 8 dígitos OK: {ncm8_dj}", "nivel": "OK"})
+
+                # ── Últimos 3 dígitos SIM ──
+                sim3_di = ncm_di[8:] if len(ncm_di) > 8 else ""
+                # Formato DI: "8414902 0120Z" → últimos chars después del NCM base
+                # Tomamos los últimos 4 chars del NCM completo del DI
+                ncm_full_di = str(srow.get("NCM", "")).replace(".", "").strip()
+                sim3_di_ext = ncm_full_di[-4:] if len(ncm_full_di) >= 4 else ncm_full_di
+                if sim3_dj.upper() not in sim3_di_ext.upper() and sim3_di_ext.upper() not in sim3_dj.upper():
+                    resultados.append({"item": item_num, "campo": "DJ SIM 3D",
+                        "mensaje": f"Últimos 3 SIM DJ ({sim3_dj}) ≠ DI ({sim3_di_ext})", "nivel": "ALERTA"})
+                else:
+                    resultados.append({"item": item_num, "campo": "DJ SIM 3D",
+                        "mensaje": f"SIM 3 dígitos OK: {sim3_dj}", "nivel": "OK"})
+
+                # ── País de origen ──
+                origen_di = str(irow.get("ORIGEN", "")).strip()
+                if not pais_coincide(pais_dj, origen_di):
+                    resultados.append({"item": item_num, "campo": "DJ PAÍS ORIGEN",
+                        "mensaje": f"País DJ ({pais_dj}) ≠ DI ({origen_di})", "nivel": "ERROR"})
+                else:
+                    resultados.append({"item": item_num, "campo": "DJ PAÍS ORIGEN",
+                        "mensaje": f"País origen OK: {pais_dj}", "nivel": "OK"})
+
+                # ── Unidad de medida ──
+                unidad_di = str(srow.get("UNIDAD DECLARADA", "")).strip()
+                if not unidad_coincide(unidad_dj, unidad_di):
+                    resultados.append({"item": item_num, "campo": "DJ UNIDAD",
+                        "mensaje": f"Unidad DJ ({unidad_dj}) ≠ DI ({unidad_di})", "nivel": "ALERTA"})
+                else:
+                    resultados.append({"item": item_num, "campo": "DJ UNIDAD",
+                        "mensaje": f"Unidad OK: {unidad_dj}", "nivel": "OK"})
+
+                # ── Cantidad ──
+                qty_di = safe_float(irow.get("CANTIDAD", 0))
+                if qty_di != qty_dj:
+                    resultados.append({"item": item_num, "campo": "DJ CANTIDAD",
+                        "mensaje": f"Cantidad DJ ({qty_dj:.0f}) ≠ DI ({qty_di:.0f})", "nivel": "ERROR"})
+                else:
+                    resultados.append({"item": item_num, "campo": "DJ CANTIDAD",
+                        "mensaje": f"Cantidad OK: {qty_dj:.0f}", "nivel": "OK"})
+
+                # ── Valor CIF unitario ──
+                fob = safe_float(irow.get("VALOR FOB", 0))
+                flete = safe_float(irow.get("FLETE EN DIV", 0))
+                seguro = safe_float(irow.get("SEGURO EN DIV", 0))
+                qty_di2 = safe_float(irow.get("CANTIDAD", 1)) or 1
+                cif_di = round((fob + flete + seguro) / qty_di2, 2)
+                diff = abs(cif_di - cif_dj)
+                if diff > TOLERANCIA_CIF:
+                    resultados.append({"item": item_num, "campo": "DJ CIF UNIT",
+                        "mensaje": f"CIF unitario DJ ({cif_dj:.2f}) ≠ DI ({cif_di:.2f}) | diff: {diff:.2f}",
+                        "nivel": "ERROR"})
+                else:
+                    resultados.append({"item": item_num, "campo": "DJ CIF UNIT",
+                        "mensaje": f"CIF unitario OK: {cif_dj:.2f}", "nivel": "OK"})
 
     return resultados
