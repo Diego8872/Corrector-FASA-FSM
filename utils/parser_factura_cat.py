@@ -69,6 +69,9 @@ RE_ITEM = re.compile(
 # CUST REF ITEM NO: 0010
 RE_CUST_REF = re.compile(r"CUST REF ITEM NO[:\s]+(\d+)")
 
+# ORDER TOTAL ... AMOUNT: 1,571.06
+RE_ORDER_AMOUNT = re.compile(r"ORDER TOTAL.*?AMOUNT:\s*([\d,]+\.\d{2})")
+
 # INVOICE TOTAL  19,520.68
 RE_INV_TOTAL = re.compile(r"INVOICE TOTAL\s+([\d,]+\.\d{2})")
 
@@ -176,9 +179,13 @@ def extraer_factura_cat(pdf_bytes: bytes) -> dict:
 
 def _consolidar(items_raw: list) -> list:
     """
-    Ítems con mismo código de parte y mismo CUST REF ITEM NO se consolidan:
-    se suman qty y precio_total, se recalcula precio_unitario.
+    NO consolida — preserva cada entrada de la factura como ítem separado.
+    El mismo código puede aparecer varias veces con distintas cantidades
+    porque corresponde a distintos ítems del DI (distintas cajas).
+    Solo elimina duplicados exactos (mismo código + misma cantidad + mismo subtotal).
+    Consolida únicamente cuando el CUST REF ITEM NO es el mismo (mismo ítem de orden).
     """
+    # Paso 1: consolidar solo por CUST REF ITEM NO (mismo ítem de la orden CAT)
     grupos: dict = {}
     orden: list = []
 
@@ -192,6 +199,7 @@ def _consolidar(items_raw: list) -> list:
             g["cantidad"]           += item["cantidad"]
             g["precio_total_parte"] += item["precio_total_parte"]
             g["subtotal"]           += item["subtotal"]
+            g["cargos_propios"]     += item["cargos_propios"]
             if g["cantidad"] > 0:
                 g["precio_unitario"] = g["precio_total_parte"] / g["cantidad"]
 
