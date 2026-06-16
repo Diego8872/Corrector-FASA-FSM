@@ -207,7 +207,7 @@ def _parsear_bloque(lineas: list) -> dict | None:
         elif "Valor total de los artículo" in l:
             campos["valor_total_fob"] = _n(l.split(":")[-1])
         elif 'Código de parte' in l:
-            val = _limpiar(l.split(")")[-1]) if ")" in l else _limpiar(l.split(":")[-1])
+            val = _limpiar(l.split(")")[-1].lstrip(": ")) if ")" in l else _limpiar(l.split(":")[-1])
             if val.upper() != "NO POSEE":
                 campos["codigo_parte"] = val
         elif "Número de Factura:" in l:
