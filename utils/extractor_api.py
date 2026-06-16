@@ -106,27 +106,9 @@ def extraer_cm(pdf_ce_bytes: bytes, pdf_re_bytes: bytes) -> dict:
 # ─── EXTRACCIÓN DJ ORIGEN NO PREFERENCIAL ────────────────────────────────────
 
 def extraer_dj_origen(pdf_bytes: bytes) -> dict:
-    system = """Sos un experto en comercio exterior argentino.
-Analizás Declaraciones Juradas de Origen No Preferencial del sistema GDE/TAD.
-Respondé SOLO con JSON válido, sin texto adicional."""
-
-    prompt = """Analizá este PDF de Declaración Jurada de Origen No Preferencial y extraé:
-{
-  "numero_if": "IF-2026-XXXXXXXX-APN-...",
-  "empresa": "...",
-  "fecha": "...",
-  "descripcion": "..."
-}
-
-IMPORTANTE:
-- numero_if: el número completo del documento IF que figura en el encabezado
-- Si no encontrás un número IF, buscá cualquier número de expediente o referencia del documento"""
-
-    try:
-        texto = _llamar_claude(system, prompt, [pdf_bytes])
-        return _parse_json(texto)
-    except Exception as e:
-        return {"error": str(e)}
+    """Extrae DJ de Origen usando PyMuPDF + regex. Sin API."""
+    from utils.parser_dj_origen import extraer_dj_origen as _extraer
+    return _extraer(pdf_bytes)
 
 
 # ─── EXTRAER NÚMERO RE DEL CE ─────────────────────────────────────────────────
