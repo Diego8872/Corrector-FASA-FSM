@@ -2,16 +2,15 @@
 Parser PyMuPDF + regex para Facturas Comerciales CAT (CATERPILLAR SARL)
 Sin uso de API — extracción local gratuita.
 
-Formato real (extraído con PyMuPDF):
-  '      1      1 AA 125-4527J  VA          PUMP GP          5,263.06     5,263.06 '
-  '                  CUST REF ITEM NO: 0010                                         '
+Lógica de normalización de código de parte:
+  - Todo numérico (empieza con 3 dígitos): tomar primeros 7 chars → 541-7108( → 5417108
+  - Con letra inicial: tomar primeros 6 chars             → 1K-6853CO → 1K6853
+  Los sufijos de origen se extraen dinámicamente de la página de totales del invoice.
 
 Casos especiales manejados:
-  - Mismo código repetido en ítems distintos (cajas distintas, mismo CUST REF ITEM NO)
+  - Sufijos de origen dinámicos: (, ), J, L, T, N, P, VN, CO, I, etc.
+  - Mismo código repetido en ítems distintos (distintas cajas, mismo CUST REF ITEM NO)
     → consolidados: se suma cantidad y precio_total, se recalcula precio_unitario
-  - Sufijos de origen: J=México, L=Italia, T=Canadá, sin sufijo=USA
-  - Sufijos de origen entre paréntesis: (=China, )=Thailand (ej: 541-7108()
-  - Sufijos multi-letra: VN=Vietnam (ej: 9M-5894VN)
   - Página 1 sin SHIPMENT → se ignora automáticamente
   - Fecha e invoice number en línea de datos (no en línea de etiquetas)
 """
@@ -30,92 +29,77 @@ def _n(s: str) -> float:
         return 0.0
 
 
-# Sufijos de una sola letra al final del código (antes de paréntesis)
-ORIGEN_SUFIJO = {
-    "J":  "MEXICO",
-    "L":  "ITALY",
-    "T":  "CANADA",
-    "N":  "GERMANY",
-    "P":  "INDIA",
-    "VN": "VIETNAM",  # dos letras — se chequea primero
-}
-
-def _origen(part_raw: str) -> str:
+def _extraer_sufijos_origen(texto_pdf: str) -> dict:
     """
-    Determina país de origen según sufijo del código de parte CAT.
-    Sufijos:
-      (  → China
-      )  → Thailand
-      J  → Mexico
-      N  → Germany
-      P  → India
-      VN → Vietnam
-      L  → Italy
-      T  → Canada
-      sin sufijo → USA
+    Lee la página de INVOICE TOTALS y extrae el mapa de sufijos de origen dinámicamente.
+    Ej: 'PARTS IDENTIFIED BY THE SUFFIX CO WERE MADE IN COLOMBIA' → {'CO': 'COLOMBIA'}
+    Siempre incluye USA como fallback para códigos sin sufijo.
     """
-    s = part_raw.strip()
-
-    # Paréntesis de China / Thailand (pueden venir solos o tras letras)
-    if s.endswith("("):
-        return "CHINA"
-    if s.endswith(")"):
-        return "THAILAND"
-
-    # Quitar cualquier paréntesis residual y revisar sufijos de letras
-    s_clean = s.rstrip("()")
-
-    # Vietnam primero (2 letras)
-    if s_clean.upper().endswith("VN"):
-        return "VIETNAM"
-
-    # Sufijos de una letra
-    m = re.search(r"([A-Z])$", s_clean)
-    if m and m.group(1) in ORIGEN_SUFIJO:
-        return ORIGEN_SUFIJO[m.group(1)]
-
-    return "USA"
+    RE_SUFIJO = re.compile(
+        r"PARTS IDENTIFIED BY THE SUFFIX\s+(\S+)\s+WERE MADE IN\s+(.+)"
+    )
+    sufijos = {"": "USA"}  # fallback
+    for sufijo, pais in RE_SUFIJO.findall(texto_pdf):
+        sufijos[sufijo.strip()] = pais.strip().title()
+    return sufijos
 
 
 def _limpiar_codigo(part_raw: str) -> str:
     """
-    Elimina sufijos de origen del código para obtener el código base.
-    Ej: '541-7108(' → '541-7108'  |  '9M-5894VN' → '9M-5894'  |  '377-6969J' → '377-6969'
+    Normaliza código de parte CAT usando la regla estructural del catálogo:
+      - Empieza con 3 dígitos (todo numérico): tomar primeros 7 chars → '541-7108(' → '5417108'
+      - Tiene letra inicial: tomar primeros 6 chars              → '1K-6853CO' → '1K6853'
+    Primero quita guiones y espacios, luego recorta.
     """
-    s = part_raw.strip()
-    # Quitar paréntesis de China/Thailand
-    s = s.rstrip("()")
-    # Quitar sufijo VN (Vietnam)
-    if s.upper().endswith("VN"):
-        s = s[:-2]
-    # Quitar sufijos de una letra (J, N, P, L, T) — solo si quedan chars antes
-    elif re.search(r"[A-Z]$", s) and len(s) > 1:
-        if s[-1] in ORIGEN_SUFIJO:
-            s = s[:-1]
-    return s.strip("-")
+    s = re.sub(r'[-\s]', '', part_raw.strip().upper())
+    if re.match(r'^\d{3}', s):
+        return s[:7]
+    else:
+        return s[:6]
+
+
+def _origen(part_raw: str, sufijos: dict) -> str:
+    """
+    Determina país de origen buscando el sufijo más largo que matchee al final del código.
+    Usa el mapa de sufijos extraído dinámicamente del invoice.
+    """
+    s = re.sub(r'[-\s]', '', part_raw.strip().upper())
+    # Código base (sin sufijo)
+    if re.match(r'^\d{3}', s):
+        base = s[:7]
+    else:
+        base = s[:6]
+    sufijo_encontrado = s[len(base):]  # lo que sobra después del código base
+
+    # Buscar coincidencia en el mapa (más largo primero para evitar ambigüedad)
+    for sufijo in sorted(sufijos.keys(), key=len, reverse=True):
+        if sufijo and sufijo_encontrado == sufijo:
+            return sufijos[sufijo]
+
+    return sufijos.get("", "USA")
 
 
 # ── Regex ─────────────────────────────────────────────────────────────────────
 
-# Línea de datos del encabezado (contiene número factura y fecha):
-# '  R06C         Z 95  046355  29APR26     IC  ...'
+# Línea de datos del encabezado:
+# '  R06C    Z 95  051485  12MAY26  IC  ...'
+# '  R06L    Z 95  051479  12MAY26  IC  ...'
 RE_DATOS_CABECERA = re.compile(
-    r"R06[CL]\s+([A-Z]\s*\d{2}\s*\d{6})\s+(\d{2}[A-Z]{3}\d{2,4})"
+    r"R0[0-9A-Z]{2}\s+([A-Z]\s*\d{2}\s*\d{6})\s+(\d{2}[A-Z]{3}\d{2,4})"
 )
 
 # Línea de ítem:
-# '      1      1 AA 125-4527J  VA          PUMP GP          5,263.06     5,263.06 '
-# '      5  1,000 AA 541-7108(  QC          HOSE BK          0.07         70.00    '
-# grupos: item_num | qty | part_raw | sufijo_desc | descripcion | unit | extended
+# '   5  1,000 AA 541-7108(  QC  HOSE BK  0.07  70.00'
+# '  57    100 AA 1K-6853CO  JA  FITTING  1.76  176.00'
 RE_ITEM = re.compile(
     r"^\s{2,8}"
     r"(\d{1,3})"              # item#
     r"\s+"
     r"([\d,]+)"               # qty
     r"\s+AA\s+"               # tipo fijo AA
-    r"([\w\-]+[()]*)"         # código de parte + sufijo origen opcional ( ) J VN etc.
+    r"([\w\-]+(?:[A-Z()]+)?)" # código + sufijo origen (letras, paréntesis)
     r"\s+"
-    r"([A-Z]{2})"             # sufijo descriptivo (VA, QC, JA, CM...)
+    r"([A-Z]{2})"             # sufijo descriptivo (VA, QC, JA...)
     r"\s{2,}"
     r"(.+?)"                  # descripción
     r"\s{2,}"
@@ -125,17 +109,9 @@ RE_ITEM = re.compile(
     r"\s*$"
 )
 
-# CUST REF ITEM NO: 0010
-RE_CUST_REF = re.compile(r"CUST REF ITEM NO[:\s]+(\d+)")
-
-# ORDER TOTAL ... AMOUNT: 1,571.06
-RE_ORDER_AMOUNT = re.compile(r"ORDER TOTAL.*?AMOUNT:\s*([\d,]+\.\d{2})")
-
-# INVOICE TOTAL  19,520.68
-RE_INV_TOTAL = re.compile(r"INVOICE TOTAL\s+([\d,]+\.\d{2})")
-
-# SHIPMENT: número de shipment (indica página con ítems)
-RE_SHIPMENT_LINE = re.compile(r"\bSHIPMENT\b.*?(\d{7,})")
+RE_CUST_REF    = re.compile(r"CUST REF ITEM NO[:\s]+(\d+)")
+RE_INV_TOTAL   = re.compile(r"INVOICE TOTAL\s+([\d,]+\.\d{2})")
+RE_SHIPMENT    = re.compile(r"\bSHIPMENT\b.*?(\d{7,})")
 
 
 # ── Parser principal ──────────────────────────────────────────────────────────
@@ -144,13 +120,20 @@ def extraer_factura_cat(pdf_bytes: bytes) -> dict:
     doc = fitz.open(stream=pdf_bytes, filetype="pdf")
 
     numero_factura = ""
-    fecha = ""
-    incoterm = ""
-    shipment = ""
-    total_factura = 0.0
-    items_raw = []
+    fecha          = ""
+    incoterm       = ""
+    shipment       = ""
+    total_factura  = 0.0
+    items_raw      = []
+    sufijos        = {"": "USA"}  # se reemplaza al encontrar la página de totales
 
-    for page in doc:
+    # Primera pasada: extraer sufijos de origen del texto completo
+    texto_completo = "\n".join(page.get_text() for page in doc)
+    sufijos = _extraer_sufijos_origen(texto_completo)
+
+    # Segunda pasada: parsear ítems
+    doc2 = fitz.open(stream=pdf_bytes, filetype="pdf")
+    for page in doc2:
         texto = page.get_text()
         lineas = texto.splitlines()
 
@@ -158,8 +141,8 @@ def extraer_factura_cat(pdf_bytes: bytes) -> dict:
         if not numero_factura:
             m = RE_DATOS_CABECERA.search(texto)
             if m:
-                numero_factura = re.sub(r"\s+", "", m.group(1))  # "Z95046355"
-                fecha = m.group(2)                                # "29APR26"
+                numero_factura = re.sub(r"\s+", "", m.group(1))
+                fecha = m.group(2)
 
         if not incoterm:
             if "CIF" in texto:
@@ -168,7 +151,7 @@ def extraer_factura_cat(pdf_bytes: bytes) -> dict:
                 incoterm = "FOB"
 
         if not shipment:
-            m = RE_SHIPMENT_LINE.search(texto)
+            m = RE_SHIPMENT.search(texto)
             if m:
                 shipment = m.group(1)
 
@@ -177,7 +160,7 @@ def extraer_factura_cat(pdf_bytes: bytes) -> dict:
         if m:
             total_factura = _n(m.group(1))
 
-        # ── Ítems (solo páginas con columna ITEM#) ──
+        # ── Ítems ──
         if "ITEM#" not in texto:
             continue
 
@@ -188,16 +171,16 @@ def extraer_factura_cat(pdf_bytes: bytes) -> dict:
 
             item_num    = int(m.group(1))
             qty         = _n(m.group(2))
-            part_raw    = m.group(3).strip()          # incluye sufijo de origen
+            part_raw    = m.group(3).strip()
             sufijo_desc = m.group(4).strip()
             descripcion = (sufijo_desc + " " + m.group(5)).strip()
             unit_price  = _n(m.group(6))
             extended    = _n(m.group(7))
 
-            origen      = _origen(part_raw)
-            codigo_base = _limpiar_codigo(part_raw)   # sin sufijo de origen
+            codigo_base = _limpiar_codigo(part_raw)
+            origen      = _origen(part_raw, sufijos)
 
-            # Buscar CUST REF ITEM NO en las 3 líneas siguientes
+            # CUST REF en las 3 líneas siguientes
             cust_ref = ""
             for j in range(i + 1, min(i + 4, len(lineas))):
                 mc = RE_CUST_REF.search(lineas[j])
@@ -207,7 +190,7 @@ def extraer_factura_cat(pdf_bytes: bytes) -> dict:
 
             items_raw.append({
                 "numero_item":        item_num,
-                "codigo_parte":       codigo_base,    # código limpio, sin sufijo
+                "codigo_parte":       codigo_base,
                 "descripcion":        descripcion,
                 "cantidad":           qty,
                 "precio_unitario":    unit_price,
@@ -219,6 +202,7 @@ def extraer_factura_cat(pdf_bytes: bytes) -> dict:
             })
 
     doc.close()
+    doc2.close()
 
     items = _consolidar(items_raw)
 
@@ -238,18 +222,15 @@ def extraer_factura_cat(pdf_bytes: bytes) -> dict:
     }
 
 
-# ── Consolidación de duplicados ───────────────────────────────────────────────
+# ── Consolidación ─────────────────────────────────────────────────────────────
 
 def _consolidar(items_raw: list) -> list:
     """
-    NO consolida — preserva cada entrada de la factura como ítem separado.
-    El mismo código puede aparecer varias veces con distintas cantidades
-    porque corresponde a distintos ítems del DI (distintas cajas).
-    Solo elimina duplicados exactos (mismo código + misma cantidad + mismo subtotal).
-    Consolida únicamente cuando el CUST REF ITEM NO es el mismo (mismo ítem de orden).
+    Consolida solo cuando el CUST REF ITEM NO es el mismo (mismo ítem de orden CAT).
+    Preserva entradas distintas cuando corresponden a cajas distintas.
     """
     grupos: dict = {}
-    orden: list = []
+    orden:  list = []
 
     for item in items_raw:
         key = (item["codigo_parte"].upper(), item["_cust_ref"])
@@ -286,7 +267,7 @@ if __name__ == "__main__":
     print(f"Ítems: {len(data['items'])}\n")
     for it in data["items"]:
         print(
-            f"  [{it['numero_item']:2d}] {it['codigo_parte']:<15} "
+            f"  [{it['numero_item']:2d}] {it['codigo_parte']:<10} "
             f"{it['descripcion']:<25} "
             f"Qty:{it['cantidad']:>8,.0f}  "
             f"U:{it['precio_unitario']:>10,.2f}  "
