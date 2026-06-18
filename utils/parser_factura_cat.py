@@ -9,6 +9,7 @@ Lógica de normalización de código de parte:
 
 Casos especiales manejados:
   - Sufijos de origen dinámicos: (, ), J, L, T, N, P, VN, CO, I, etc.
+  - Cargo SPECIAL PACKING por ítem: se suma al subtotal (campo 'cargos_propios')
   - Mismo código repetido en ítems distintos (distintas cajas, mismo CUST REF ITEM NO)
     → consolidados: se suma cantidad y precio_total, se recalcula precio_unitario
   - Página 1 sin SHIPMENT → se ignora automáticamente
@@ -113,6 +114,52 @@ RE_CUST_REF    = re.compile(r"CUST REF ITEM NO[:\s]+(\d+)")
 RE_INV_TOTAL   = re.compile(r"INVOICE TOTAL\s+([\d,]+\.\d{2})")
 RE_SHIPMENT    = re.compile(r"\bSHIPMENT\b.*?(\d{7,})")
 
+# ── Cargo adicional por ítem ──────────────────────────────────────────────────
+# Línea de cargo: '<CONCEPTO> ... <pct>%  <monto>' (ej: 'SPECIAL PACKING 1%  1.00 %  15.56')
+#
+# Estrategia de doble red:
+#   1) Conceptos conocidos (lista controlada) → match preciso y rápido.
+#   2) Si ninguno matchea, fallback genérico por patrón estructural
+#      (texto en mayúsculas + porcentaje + monto), para no perder cargos
+#      con nombres que CAT agregue en el futuro (HANDLING FEE, EXPEDITE
+#      CHARGE, etc.) sin tener que tocar el código.
+CONCEPTOS_CARGO_CONOCIDOS = [
+    "BO FREIGHT CHARGE",      # más específico primero, para no perderlo bajo "FREIGHT CHARGE"
+    "EMERGENCY FILL CHARGE",
+    "SPECIAL PACKING",
+    "FREIGHT CHARGE",
+    "HANDLING FEE",
+    "EXPEDITE CHARGE",
+]
+
+RE_CARGO_CONOCIDO = re.compile(
+    r"(" + "|".join(re.escape(c) for c in CONCEPTOS_CARGO_CONOCIDOS) + r")"
+    r".*?([\d,]+\.\d{2})\s*$"
+)
+
+# Fallback: cualquier línea "TEXTO [pct%] ... pct%  monto" que no sea PART WEIGHT,
+# ORDER TOTAL, CASE NO, etc. Tolera un porcentaje pegado al nombre (ej. 'PACKING 1%')
+# antes del segundo porcentaje con espacio (ej. '1.00 %') que precede al monto.
+RE_CARGO_GENERICO = re.compile(
+    r"^\s*([A-Z][A-Z\s\-]{2,30}?)\s+[\d.]+%?\s+[\d.]+\s*%\s+([\d,]+\.\d{2})\s*$"
+)
+
+
+def _detectar_cargo_item(linea: str):
+    """
+    Intenta detectar un cargo adicional por ítem en la línea dada.
+    Retorna (concepto, monto) o (None, 0.0) si no matchea ninguna estrategia.
+    """
+    m = RE_CARGO_CONOCIDO.search(linea)
+    if m:
+        return m.group(1).strip(), _n(m.group(2))
+
+    m = RE_CARGO_GENERICO.match(linea)
+    if m:
+        return m.group(1).strip(), _n(m.group(2))
+
+    return None, 0.0
+
 
 # ── Parser principal ──────────────────────────────────────────────────────────
 
@@ -180,13 +227,25 @@ def extraer_factura_cat(pdf_bytes: bytes) -> dict:
             codigo_base = _limpiar_codigo(part_raw)
             origen      = _origen(part_raw, sufijos)
 
-            # CUST REF en las 3 líneas siguientes
-            cust_ref = ""
-            for j in range(i + 1, min(i + 4, len(lineas))):
-                mc = RE_CUST_REF.search(lineas[j])
-                if mc:
-                    cust_ref = mc.group(1)
+            # CUST REF y cargo adicional en las 4 líneas siguientes
+            # (entre el ítem y PART WEIGHT / ORDER TOTAL / próximo ítem)
+            cust_ref       = ""
+            cargo_propio   = 0.0
+            concepto_cargo = ""
+            for j in range(i + 1, min(i + 5, len(lineas))):
+                lj = lineas[j]
+                if not cust_ref:
+                    mc = RE_CUST_REF.search(lj)
+                    if mc:
+                        cust_ref = mc.group(1)
+                concepto, monto = _detectar_cargo_item(lj)
+                if concepto:
+                    concepto_cargo = concepto
+                    cargo_propio   = monto
+                if "PART WEIGHT" in lj:
                     break
+
+            subtotal = extended + cargo_propio
 
             items_raw.append({
                 "numero_item":        item_num,
@@ -195,8 +254,9 @@ def extraer_factura_cat(pdf_bytes: bytes) -> dict:
                 "cantidad":           qty,
                 "precio_unitario":    unit_price,
                 "precio_total_parte": extended,
-                "cargos_propios":     0.0,
-                "subtotal":           extended,
+                "cargos_propios":     cargo_propio,
+                "concepto_cargo":     concepto_cargo,
+                "subtotal":           subtotal,
                 "origen":             origen,
                 "_cust_ref":          cust_ref,
             })
