@@ -7,7 +7,8 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from config.defaults import EMPRESAS, DESPACHANTE, CUIT_DESPACHANTE, REGIMENES, ADUANAS
 from utils.parser_di import leer_di, safe_float
 from utils.validaciones import validar_items, validar_subitems, validar_liquidacion, validar_prorrateo, validar_ncm_excel
-from utils.extractor_api import extraer_factura, extraer_forwarding, extraer_bl, extraer_cm, extraer_dj_origen, extraer_numero_re_de_ce
+from utils.extractor_api import extraer_forwarding, extraer_bl, extraer_cm, extraer_dj_origen, extraer_numero_re_de_ce
+from utils.parser_factura_cat import extraer_factura_cat
 from utils.cruce_docs import validar_cm_vs_di, validar_factura_vs_di, validar_caratula_vs_docs, validar_dj_origen
 from utils.reporte_pdf import generar_reporte_pdf
 
@@ -123,7 +124,8 @@ if analizar:
             todos_resultados.extend(validar_liquidacion(df_liq, df_items, df_subitems, df_caratula))
         st.write(f"   ✅ {len(todos_resultados)} resultados")
 
-        # ── 3. Excel NCM ──────────────────────────────────────────────────
+        # ── 3. Excel NCM / Clasificación ────────────────────────────────────
+        df_ncm = None
         if ncm_file:
             st.write("📑 Validando NCM...")
             try:
@@ -133,13 +135,17 @@ if analizar:
             except Exception as e:
                 st.write(f"   ❌ Error NCM: {e}")
 
-        # ── 4. API: Facturas ──────────────────────────────────────────────
+        # ── 4. Facturas CAT (parser local, sin API) ─────────────────────────
         datos_facturas = {}
         if facturas:
-            st.write(f"🧾 Extrayendo {len(facturas)} factura(s)...")
+            st.write(f"🧾 Extrayendo {len(facturas)} factura(s) (parser local CAT)...")
             for fac in facturas:
                 try:
-                    datos = extraer_factura(fac.read())
+                    # Por ahora todas las facturas son CAT. Si en el futuro se
+                    # suman otros proveedores, acá se puede detectar el tipo
+                    # (ej. por nombre de archivo o contenido) y enrutar al
+                    # parser correspondiente.
+                    datos = extraer_factura_cat(fac.read())
                     datos_facturas[fac.name] = datos
                     st.write(f"   ✅ {fac.name}: {len(datos.get('items', []))} ítems")
                 except Exception as e:
@@ -247,7 +253,7 @@ if analizar:
         if datos_cm:
             todos_resultados.extend(validar_cm_vs_di(df_items, df_subitems, datos_cm))
         if datos_facturas:
-            todos_resultados.extend(validar_factura_vs_di(df_items, df_subitems, datos_facturas))
+            todos_resultados.extend(validar_factura_vs_di(df_items, df_subitems, datos_facturas, df_ncm))
         if datos_forwarding or datos_bl:
             todos_resultados.extend(validar_caratula_vs_docs(caratula, datos_forwarding, datos_bl, datos_facturas, config))
         if datos_dj:
