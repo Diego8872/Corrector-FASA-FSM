@@ -9,9 +9,14 @@ Lógica de normalización de código de parte:
 
 Casos especiales manejados:
   - Sufijos de origen dinámicos: (, ), J, L, T, N, P, VN, CO, I, etc.
-  - Cargo SPECIAL PACKING por ítem: se suma al subtotal (campo 'cargos_propios')
-  - Mismo código repetido en ítems distintos (distintas cajas, mismo CUST REF ITEM NO)
-    → consolidados: se suma cantidad y precio_total, se recalcula precio_unitario
+  - Cargo adicional por ítem (SPECIAL PACKING, FREIGHT CHARGE, BO FREIGHT
+    CHARGE, EMERGENCY FILL CHARGE, etc.): se suma al subtotal de esa línea
+    específica (campo 'cargos_propios'), sin mirar nunca el ORDER TOTAL
+    AMOUNT del grupo.
+  - Cada línea de la factura = un ítem de DI independiente (sin consolidar),
+    incluso si el código de parte y el CUST REF ITEM NO se repiten — esto
+    ocurre cuando CAT facturó el mismo material en líneas separadas
+    (distintas cajas) pero cada línea tiene su propio FOB declarable.
   - Página 1 sin SHIPMENT → se ignora automáticamente
   - Fecha e invoice number en línea de datos (no en línea de etiquetas)
 """
@@ -264,7 +269,7 @@ def extraer_factura_cat(pdf_bytes: bytes) -> dict:
     doc.close()
     doc2.close()
 
-    items = _consolidar(items_raw)
+    items = _renumerar(items_raw)
 
     return {
         "numero_factura":  numero_factura,
@@ -282,35 +287,22 @@ def extraer_factura_cat(pdf_bytes: bytes) -> dict:
     }
 
 
-# ── Consolidación ─────────────────────────────────────────────────────────────
+# ── Renumeración ──────────────────────────────────────────────────────────────
 
-def _consolidar(items_raw: list) -> list:
+def _renumerar(items_raw: list) -> list:
     """
-    Consolida solo cuando el CUST REF ITEM NO es el mismo (mismo ítem de orden CAT).
-    Preserva entradas distintas cuando corresponden a cajas distintas.
+    NO consolida. Cada línea de la factura corresponde a un ítem distinto
+    del DI (relación 1 a 1), incluso si el código de parte y el CUST REF
+    ITEM NO se repiten — eso ocurre cuando CAT facturó el mismo material
+    en líneas separadas (distintas cajas, distinta disponibilidad, etc.)
+    pero cada línea es un ítem de DI independiente con su propio FOB.
+
+    Solo limpia el campo interno _cust_ref y renumera secuencialmente.
     """
-    grupos: dict = {}
-    orden:  list = []
-
-    for item in items_raw:
-        key = (item["codigo_parte"].upper(), item["_cust_ref"])
-        if key not in grupos:
-            grupos[key] = item.copy()
-            orden.append(key)
-        else:
-            g = grupos[key]
-            g["cantidad"]           += item["cantidad"]
-            g["precio_total_parte"] += item["precio_total_parte"]
-            g["subtotal"]           += item["subtotal"]
-            g["cargos_propios"]     += item["cargos_propios"]
-            if g["cantidad"] > 0:
-                g["precio_unitario"] = g["precio_total_parte"] / g["cantidad"]
-
-    resultado = [grupos[k] for k in orden]
+    resultado = [item.copy() for item in items_raw]
     for idx, it in enumerate(resultado, 1):
         it["numero_item"] = idx
         it.pop("_cust_ref", None)
-
     return resultado
 
 
