@@ -232,12 +232,13 @@ def extraer_factura_cat(pdf_bytes: bytes) -> dict:
             codigo_base = _limpiar_codigo(part_raw)
             origen      = _origen(part_raw, sufijos)
 
-            # CUST REF y cargo adicional en las 4 líneas siguientes
+            # CUST REF y cargos adicionales en las 5 líneas siguientes
             # (entre el ítem y PART WEIGHT / ORDER TOTAL / próximo ítem)
+            # Se acumulan TODOS los cargos que aparezcan en el bloque.
             cust_ref       = ""
             cargo_propio   = 0.0
             concepto_cargo = ""
-            for j in range(i + 1, min(i + 5, len(lineas))):
+            for j in range(i + 1, min(i + 6, len(lineas))):
                 lj = lineas[j]
                 if not cust_ref:
                     mc = RE_CUST_REF.search(lj)
@@ -245,8 +246,8 @@ def extraer_factura_cat(pdf_bytes: bytes) -> dict:
                         cust_ref = mc.group(1)
                 concepto, monto = _detectar_cargo_item(lj)
                 if concepto:
-                    concepto_cargo = concepto
-                    cargo_propio   = monto
+                    cargo_propio   += monto   # acumular, puede haber más de uno
+                    concepto_cargo  = (concepto_cargo + " | " + concepto).strip(" |") if concepto_cargo else concepto
                 if "PART WEIGHT" in lj:
                     break
 
