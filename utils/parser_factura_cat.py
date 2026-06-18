@@ -283,7 +283,7 @@ def extraer_factura_cat(pdf_bytes: bytes) -> dict:
         "total_cargos":    0.0,
         "total_factura":   total_factura,
         "cargos_globales": 0.0,
-        "tipo_cargos":     "global",
+        "tipo_cargos":     "por_item",
     }
 
 
