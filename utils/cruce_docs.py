@@ -162,6 +162,10 @@ def validar_factura_vs_di(
     """
     resultados    = []
     codigos_clasi = _cargar_codigos_clasificacion(df_clasificacion)
+    # Set de líneas de factura ya usadas, por factura: {nro_factura: {id(item), ...}}
+    # Evita que dos ítems distintos del DI matcheen contra la misma línea de
+    # factura cuando código + cantidad son idénticos en más de una línea.
+    usados_por_factura: dict = {}
 
     for _, subrow in df_subitems.iterrows():
         item_num   = str(subrow.get("ITEM", "")).strip().zfill(4)
@@ -178,24 +182,28 @@ def validar_factura_vs_di(
                 continue
 
             items_factura = fac_data.get("items", [])
+            usados = usados_por_factura.setdefault(nro_factura, set())
 
-            # Buscar por código + cantidad exacta
+            # Buscar por código + cantidad exacta, excluyendo líneas ya usadas
             match_fac = next(
                 (i for i in items_factura
-                 if normalizar_codigo(i.get("codigo_parte", "")) == modelo_di
+                 if id(i) not in usados
+                 and normalizar_codigo(i.get("codigo_parte", "")) == modelo_di
                  and abs(safe_float(i.get("cantidad", 0)) - cantidad_di) < 0.01),
                 None
             )
-            # Fallback: solo por código
+            # Fallback: solo por código, excluyendo usadas
             if not match_fac:
                 match_fac = next(
                     (i for i in items_factura
-                     if normalizar_codigo(i.get("codigo_parte", "")) == modelo_di),
+                     if id(i) not in usados
+                     and normalizar_codigo(i.get("codigo_parte", "")) == modelo_di),
                     None
                 )
 
             if match_fac:
                 encontrado = True
+                usados.add(id(match_fac))
                 tipo_cargos = fac_data.get("tipo_cargos", "por_item")
 
                 if tipo_cargos == "por_item":
