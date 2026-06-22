@@ -88,10 +88,20 @@ def _origen(part_raw: str, sufijos: dict) -> str:
 # ── Regex ─────────────────────────────────────────────────────────────────────
 
 # Línea de datos del encabezado:
-# '  R06C    Z 95  051485  12MAY26  IC  ...'
-# '  R06L    Z 95  051479  12MAY26  IC  ...'
+# '  R06C    Z 95  051485  12MAY26  IC  ...   US DOLLAR'
+# '  R06L    Z 95  051479  12MAY26  IC  ...   US DOLLAR'
 RE_DATOS_CABECERA = re.compile(
     r"R0[0-9A-Z]{2}\s+([A-Z]\s*\d{2}\s*\d{6})\s+(\d{2}[A-Z]{3}\d{2,4})"
+)
+
+# Moneda: última palabra(s) en mayúsculas de la línea de datos, ej. 'US DOLLAR'
+RE_MONEDA = re.compile(
+    r"\b(US DOLLAR|EURO|EUR|USD)\b"
+)
+
+# Incoterm: línea 'SHIP TERMS:' seguida del código (ej. 'CIF - COST, INSURANCE...')
+RE_INCOTERM = re.compile(
+    r"SHIP TERMS:\s*\n?\s*([A-Z]{3})\b"
 )
 
 # Línea de ítem:
@@ -174,14 +184,24 @@ def extraer_factura_cat(pdf_bytes: bytes) -> dict:
     numero_factura = ""
     fecha          = ""
     incoterm       = ""
+    moneda         = "USD"  # fallback si no se detecta explícitamente
     shipment       = ""
     total_factura  = 0.0
     items_raw      = []
     sufijos        = {"": "USA"}  # se reemplaza al encontrar la página de totales
 
-    # Primera pasada: extraer sufijos de origen del texto completo
+    # Primera pasada: extraer sufijos de origen, incoterm y moneda del texto completo
     texto_completo = "\n".join(page.get_text() for page in doc)
     sufijos = _extraer_sufijos_origen(texto_completo)
+
+    m_incoterm = RE_INCOTERM.search(texto_completo)
+    if m_incoterm:
+        incoterm = m_incoterm.group(1)
+
+    m_moneda = RE_MONEDA.search(texto_completo)
+    if m_moneda:
+        moneda_raw = m_moneda.group(1)
+        moneda = "USD" if moneda_raw in ("US DOLLAR", "USD") else moneda_raw
 
     # Segunda pasada: parsear ítems
     doc2 = fitz.open(stream=pdf_bytes, filetype="pdf")
@@ -195,12 +215,6 @@ def extraer_factura_cat(pdf_bytes: bytes) -> dict:
             if m:
                 numero_factura = re.sub(r"\s+", "", m.group(1))
                 fecha = m.group(2)
-
-        if not incoterm:
-            if "CIF" in texto:
-                incoterm = "CIF"
-            elif "FOB" in texto:
-                incoterm = "FOB"
 
         if not shipment:
             m = RE_SHIPMENT.search(texto)
@@ -276,7 +290,7 @@ def extraer_factura_cat(pdf_bytes: bytes) -> dict:
         "numero_factura":  numero_factura,
         "fecha":           fecha,
         "vendedor":        "CATERPILLAR SARL (LATIN AMERICA)",
-        "moneda":          "USD",
+        "moneda":          moneda,
         "incoterm":        incoterm,
         "shipment":        shipment,
         "items":           items,
