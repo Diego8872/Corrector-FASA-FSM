@@ -1,10 +1,11 @@
+import re
 import pandas as pd
 from config.defaults import (
     PAISES_PROHIBIDOS, CONCEPTOS_CON_CM, CONCEPTO_SIN_CM_PROHIBIDO,
     CONCEPTO_USADO, KEYWORDS_DUMPING, TOLERANCIA_FOB,
     BANCO_ARGENTINA, IMPOGIRO
 )
-from utils.parser_di import safe_float
+from utils.parser_di import safe_float, normalizar_codigo
 
 CAMPOS_DUMPING_DJ = ["I:DUMPR60DECJUR", "I:DUMPR60PAISMAYOR", "I:DUMPADVALPAISTXT"]
 
@@ -32,13 +33,50 @@ def _ref(modelo: str = "", factura: str = "", cm: str = "") -> str:
         partes.append(f"CM: {cm}")
     return (" | " + " | ".join(partes)) if partes else ""
 
-def _build_ref_map(df_items: pd.DataFrame, df_subitems: pd.DataFrame, df_caratula: pd.DataFrame = None) -> dict:
+
+def _facturas_que_contienen_codigo(modelo: str, datos_facturas: dict) -> str:
+    """
+    Busca el código de parte (normalizado) en cada factura ya parseada y
+    retorna los nombres de las facturas que efectivamente lo contienen.
+    Evita listar todas las facturas del despacho cuando no hay CM que
+    indique la factura exacta.
+    """
+    if not modelo or not datos_facturas:
+        return ""
+    modelo_norm = normalizar_codigo(modelo)
+    encontradas = []
+    for nro_factura, fac_data in datos_facturas.items():
+        if "error" in fac_data:
+            continue
+        items_factura = fac_data.get("items", [])
+        if any(normalizar_codigo(i.get("codigo_parte", "")) == modelo_norm for i in items_factura):
+            nombre_limpio = re.sub(r"\.pdf$", "", nro_factura, flags=re.IGNORECASE)
+            encontradas.append(nombre_limpio)
+    return ", ".join(encontradas)
+
+
+def _build_ref_map(df_items: pd.DataFrame, df_subitems: pd.DataFrame, df_caratula: pd.DataFrame = None,
+                    datos_cm: dict = None, datos_facturas: dict = None) -> dict:
     """
     Construye dict {item_zfill4: {modelo, factura, cm}}
     combinando info de Item, Subitem y Carátula.
-    La factura se obtiene del CM declarado en el ítem cruzado con la Carátula.
+
+    La factura se determina con esta prioridad:
+      1. Si el ítem tiene CM y ese CM fue procesado (datos_cm), se usa la
+         factura declarada en el propio CM (numero_factura) — es la fuente
+         más confiable, sin ambigüedad.
+      2. Si no hay CM (o no se pudo determinar), se busca el código de
+         parte del ítem en cada factura ya parseada (datos_facturas) y se
+         listan solo las que realmente lo contienen.
+      3. Si no hay datos_facturas disponibles, se cae al campo directo del
+         DI (D:NRO-FACTURA / D:FACTURA) o, en última instancia, a la lista
+         completa de facturas mencionadas en la Carátula (comportamiento
+         legado, menos preciso).
     """
-    # Leer facturas de la Carátula si está disponible
+    datos_cm = datos_cm or {}
+    datos_facturas = datos_facturas or {}
+
+    # Leer facturas de la Carátula como último fallback
     facturas_caratula = []
     if df_caratula is not None:
         try:
@@ -55,11 +93,7 @@ def _build_ref_map(df_items: pd.DataFrame, df_subitems: pd.DataFrame, df_caratul
         for _, row in df_items.iterrows():
             item = str(row.get("ITEM", "")).strip().zfill(4)
             cm = str(row.get("D:CERTSM", "")).strip()
-            # Factura: buscar en columna directa o usar lista de carátula
-            factura = str(row.get("D:NRO-FACTURA", row.get("D:FACTURA", ""))).strip()
-            if not factura and facturas_caratula:
-                factura = ", ".join(facturas_caratula)
-            ref[item] = {"factura": factura, "cm": cm, "modelo": ""}
+            ref[item] = {"factura": "", "cm": cm, "modelo": ""}
 
     if df_subitems is not None:
         for _, row in df_subitems.iterrows():
@@ -69,13 +103,34 @@ def _build_ref_map(df_items: pd.DataFrame, df_subitems: pd.DataFrame, df_caratul
                 if modelo and not ref[item]["modelo"]:
                     ref[item]["modelo"] = modelo
             else:
-                factura = ", ".join(facturas_caratula) if facturas_caratula else ""
-                ref[item] = {"factura": factura, "cm": "", "modelo": modelo}
+                ref[item] = {"factura": "", "cm": "", "modelo": modelo}
+
+    # Resolver factura para cada ítem según la prioridad descripta arriba
+    for item, info in ref.items():
+        cm = info["cm"]
+        modelo = info["modelo"]
+        factura = ""
+
+        # 1. Vía CM: usar la factura declarada en el propio CM
+        if cm and cm in datos_cm and "error" not in datos_cm[cm]:
+            factura = datos_cm[cm].get("numero_factura", "").strip()
+
+        # 2. Vía búsqueda real en facturas parseadas
+        if not factura and modelo and datos_facturas:
+            factura = _facturas_que_contienen_codigo(modelo, datos_facturas)
+
+        # 3. Fallback legado: campo directo del DI o lista completa de carátula
+        if not factura:
+            factura = facturas_caratula and ", ".join(facturas_caratula) or ""
+
+        info["factura"] = factura
+
     return ref
 
 
-def validar_items(df_items: pd.DataFrame, df_subitems: pd.DataFrame = None, df_caratula: pd.DataFrame = None) -> list:
-    ref_map = _build_ref_map(df_items, df_subitems, df_caratula)
+def validar_items(df_items: pd.DataFrame, df_subitems: pd.DataFrame = None, df_caratula: pd.DataFrame = None,
+                   datos_cm: dict = None, datos_facturas: dict = None) -> list:
+    ref_map = _build_ref_map(df_items, df_subitems, df_caratula, datos_cm, datos_facturas)
     resultados = []
     for _, row in df_items.iterrows():
         item = str(row.get("ITEM", "?")).strip().zfill(4)
@@ -139,8 +194,9 @@ def validar_items(df_items: pd.DataFrame, df_subitems: pd.DataFrame = None, df_c
     return resultados
 
 
-def validar_subitems(df_subitems: pd.DataFrame, df_items: pd.DataFrame = None, df_caratula: pd.DataFrame = None) -> list:
-    ref_map = _build_ref_map(df_items, df_subitems, df_caratula)
+def validar_subitems(df_subitems: pd.DataFrame, df_items: pd.DataFrame = None, df_caratula: pd.DataFrame = None,
+                      datos_cm: dict = None, datos_facturas: dict = None) -> list:
+    ref_map = _build_ref_map(df_items, df_subitems, df_caratula, datos_cm, datos_facturas)
     resultados = []
     for _, row in df_subitems.iterrows():
         item = str(row.get("ITEM", "?")).strip().zfill(4)
@@ -152,9 +208,10 @@ def validar_subitems(df_subitems: pd.DataFrame, df_items: pd.DataFrame = None, d
     return resultados
 
 
-def validar_liquidacion(df_liq: pd.DataFrame, df_items: pd.DataFrame, df_subitems: pd.DataFrame, df_caratula: pd.DataFrame = None) -> list:
+def validar_liquidacion(df_liq: pd.DataFrame, df_items: pd.DataFrame, df_subitems: pd.DataFrame, df_caratula: pd.DataFrame = None,
+                         datos_cm: dict = None, datos_facturas: dict = None) -> list:
     resultados = []
-    ref_map = _build_ref_map(df_items, df_subitems, df_caratula)
+    ref_map = _build_ref_map(df_items, df_subitems, df_caratula, datos_cm, datos_facturas)
 
     cm_por_item = {}
     estado_por_item = {}
@@ -269,8 +326,9 @@ def validar_liquidacion(df_liq: pd.DataFrame, df_items: pd.DataFrame, df_subitem
     return resultados
 
 
-def validar_prorrateo(df_items: pd.DataFrame, fob_total: float, flete_total: float, seguro_total: float, df_subitems: pd.DataFrame = None, df_caratula: pd.DataFrame = None) -> list:
-    ref_map = _build_ref_map(df_items, df_subitems, df_caratula)
+def validar_prorrateo(df_items: pd.DataFrame, fob_total: float, flete_total: float, seguro_total: float, df_subitems: pd.DataFrame = None, df_caratula: pd.DataFrame = None,
+                       datos_cm: dict = None, datos_facturas: dict = None) -> list:
+    ref_map = _build_ref_map(df_items, df_subitems, df_caratula, datos_cm, datos_facturas)
     resultados = []
     if not fob_total:
         return resultados
@@ -291,8 +349,9 @@ def validar_prorrateo(df_items: pd.DataFrame, fob_total: float, flete_total: flo
     return resultados
 
 
-def validar_ncm_excel(df_subitems: pd.DataFrame, df_ncm: pd.DataFrame, df_items: pd.DataFrame = None, df_caratula: pd.DataFrame = None) -> list:
-    ref_map = _build_ref_map(df_items, df_subitems, df_caratula)
+def validar_ncm_excel(df_subitems: pd.DataFrame, df_ncm: pd.DataFrame, df_items: pd.DataFrame = None, df_caratula: pd.DataFrame = None,
+                       datos_cm: dict = None, datos_facturas: dict = None) -> list:
+    ref_map = _build_ref_map(df_items, df_subitems, df_caratula, datos_cm, datos_facturas)
     resultados = []
     if df_ncm is None or df_ncm.empty:
         return resultados
@@ -314,7 +373,6 @@ def validar_ncm_excel(df_subitems: pd.DataFrame, df_ncm: pd.DataFrame, df_items:
     if not col_parte or not col_ncm:
         return [alerta("GENERAL", "NCM EXCEL", "No se pudo identificar columnas en el Excel de clasificación")]
 
-    from utils.parser_di import normalizar_codigo
     mapa_ncm = {}
     for _, row in df_ncm.iterrows():
         parte = normalizar_codigo(str(row.get(col_parte, "")))
