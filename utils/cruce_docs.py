@@ -1,3 +1,4 @@
+import re
 import pandas as pd
 from utils.parser_di import normalizar_codigo, safe_float
 from config.defaults import TOLERANCIA_FOB
@@ -249,6 +250,114 @@ def validar_factura_vs_di(
             resultados.extend(
                 _validar_codigo_en_clasificacion(modelo_di, codigos_clasi, item_num, "—")
             )
+
+    return resultados
+
+
+def _normalizar_moneda(texto: str) -> str:
+    """
+    Normaliza distintas formas de nombrar la misma moneda a un código corto.
+    Ej: 'DOL - DOLAR ESTADOUNIDENSE' -> 'USD', 'US DOLLAR' -> 'USD'
+    """
+    t = (texto or "").upper()
+    if "DOLAR" in t or "DOLLAR" in t or t.strip() == "USD":
+        return "USD"
+    if "EURO" in t or t.strip() == "EUR":
+        return "EUR"
+    return t.strip()
+
+
+def _normalizar_incoterm(texto: str) -> str:
+    """Extrae el código de 3 letras de un incoterm, sea cual sea el formato."""
+    t = (texto or "").strip().upper()
+    m = re.search(r"\b([A-Z]{3})\b", t)
+    return m.group(1) if m else t
+
+
+# ── Validación de Totales de Carátula (FOB, Moneda, Incoterm) ─────────────────
+
+def validar_caratula_totales(caratula: dict, datos_facturas: dict, datos_forwarding: dict = None) -> list:
+    """
+    Valida, contra la carátula del DI:
+      - FOB total: suma de total_factura de todas las facturas subidas.
+      - Moneda (FOB/Flete/Seguro): coincide con la moneda real de cada
+        documento de origen (factura para FOB, forwarding para Flete/Seguro).
+      - Incoterm: coincide entre todas las facturas y contra el INCOTERM
+        declarado en la carátula. Si una factura difiere de otra, o de
+        la carátula, se alerta.
+    No requiere llamadas a la API — todo proviene de datos ya extraídos.
+    """
+    resultados = []
+
+    def al(campo, msg, nivel="ALERTA"):
+        return {"item": "CARÁTULA", "campo": campo, "mensaje": msg, "nivel": nivel}
+    def ok_(campo, msg):
+        return {"item": "CARÁTULA", "campo": campo, "mensaje": msg, "nivel": "OK"}
+
+    facturas_validas = {k: v for k, v in (datos_facturas or {}).items() if "error" not in v}
+
+    # ── FOB total: suma de facturas vs carátula ──
+    if facturas_validas:
+        fob_total_facturas = round(sum(safe_float(f.get("total_factura", 0)) for f in facturas_validas.values()), 2)
+        fob_di = safe_float(_buscar_caratula(caratula, "FOB") or 0)
+
+        if abs(fob_di - fob_total_facturas) > TOLERANCIA_FOB:
+            resultados.append(al("FOB", f"DI: {fob_di:.2f} — Suma de facturas: {fob_total_facturas:.2f} "
+                                          f"(dif: {abs(fob_di - fob_total_facturas):.2f})", "ERROR"))
+        else:
+            resultados.append(ok_("FOB", f"FOB total correcto: {fob_di:.2f}"))
+
+    # ── Incoterm: entre facturas, y contra carátula ──
+    if facturas_validas:
+        incoterms_facturas = {}  # incoterm -> [nombres de factura]
+        for nro_factura, f in facturas_validas.items():
+            ic = _normalizar_incoterm(f.get("incoterm", ""))
+            if ic:
+                incoterms_facturas.setdefault(ic, []).append(nro_factura)
+
+        if len(incoterms_facturas) > 1:
+            detalle = " | ".join(f"{ic}: {', '.join(facs)}" for ic, facs in incoterms_facturas.items())
+            resultados.append(al("INCOTERM", f"Las facturas declaran incoterms distintos entre sí — {detalle}", "ERROR"))
+        elif incoterms_facturas:
+            incoterm_facturas = next(iter(incoterms_facturas))
+            incoterm_di = _normalizar_incoterm(_buscar_caratula(caratula, "INCOTERM") or "")
+            if incoterm_di and incoterm_di != incoterm_facturas:
+                resultados.append(al("INCOTERM", f"DI: {incoterm_di} — Facturas: {incoterm_facturas}", "ERROR"))
+            else:
+                resultados.append(ok_("INCOTERM", f"Incoterm correcto: {incoterm_facturas}"))
+
+    # ── Moneda FOB: facturas vs carátula ──
+    if facturas_validas:
+        monedas_facturas = {_normalizar_moneda(f.get("moneda", "")) for f in facturas_validas.values()}
+        moneda_fob_di = _normalizar_moneda(_buscar_caratula(caratula, "MONEDA FOB") or "")
+
+        if len(monedas_facturas) > 1:
+            resultados.append(al("MONEDA FOB", f"Las facturas declaran monedas distintas entre sí: {monedas_facturas}", "ERROR"))
+        elif monedas_facturas:
+            moneda_factura = next(iter(monedas_facturas))
+            if moneda_fob_di and moneda_fob_di != moneda_factura:
+                resultados.append(al("MONEDA FOB", f"DI: {moneda_fob_di} — Factura: {moneda_factura}", "ERROR"))
+            else:
+                resultados.append(ok_("MONEDA FOB", f"Moneda FOB correcta: {moneda_factura}"))
+
+    # ── Moneda Flete / Seguro: forwarding vs carátula ──
+    if datos_forwarding and "error" not in datos_forwarding:
+        moneda_flete_fwd = _normalizar_moneda(datos_forwarding.get("moneda_flete", "") or datos_forwarding.get("moneda", ""))
+        moneda_seguro_fwd = _normalizar_moneda(datos_forwarding.get("moneda_seguro", "") or datos_forwarding.get("moneda", ""))
+        moneda_flete_di = _normalizar_moneda(_buscar_caratula(caratula, "MONEDA FLETE") or "")
+        moneda_seg_di = _normalizar_moneda(_buscar_caratula(caratula, "MONEDA SEG") or "")
+
+        if moneda_flete_fwd:
+            if moneda_flete_di and moneda_flete_di != moneda_flete_fwd:
+                resultados.append(al("MONEDA FLETE", f"DI: {moneda_flete_di} — Forwarding: {moneda_flete_fwd}", "ERROR"))
+            else:
+                resultados.append(ok_("MONEDA FLETE", f"Moneda flete correcta: {moneda_flete_fwd}"))
+
+        if moneda_seguro_fwd:
+            if moneda_seg_di and moneda_seg_di != moneda_seguro_fwd:
+                resultados.append(al("MONEDA SEG", f"DI: {moneda_seg_di} — Forwarding: {moneda_seguro_fwd}", "ERROR"))
+            else:
+                resultados.append(ok_("MONEDA SEG", f"Moneda seguro correcta: {moneda_seguro_fwd}"))
 
     return resultados
 
