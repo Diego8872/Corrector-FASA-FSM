@@ -11,10 +11,26 @@ def _n(s):
     except:
         return 0.0
 
+
+def _detectar_moneda(lineas: list) -> str:
+    """
+    Detecta la moneda real del Forwarding Invoice buscando códigos conocidos
+    en el texto (columna VAT CUR de cada línea, o 'Insured Value: ... USD').
+    Fallback a USD si no se encuentra ninguno explícito.
+    """
+    texto = "\n".join(lineas).upper()
+    for codigo in ("USD", "EUR", "ARS"):
+        if re.search(rf"\b{codigo}\b", texto):
+            return codigo
+    return "USD"
+
+
 def extraer_forwarding(pdf_bytes: bytes) -> dict:
     doc = fitz.open(stream=pdf_bytes, filetype="pdf")
     lineas = [l for page in doc for l in page.get_text().splitlines()]
     doc.close()
+
+    moneda_detectada = _detectar_moneda(lineas)
 
     resultado = {
         "numero_invoice":        "",
@@ -29,7 +45,9 @@ def extraer_forwarding(pdf_bytes: bytes) -> dict:
         "seguro_total":          0.0,
         "otros_cargos":          [],
         "total_invoice_dealer":  0.0,
-        "moneda":                "USD",
+        "moneda":                moneda_detectada,
+        "moneda_flete":          moneda_detectada,  # misma columna VAT CUR que el resto del doc
+        "moneda_seguro":         moneda_detectada,  # idem
         "alertas":               [],
     }
 
