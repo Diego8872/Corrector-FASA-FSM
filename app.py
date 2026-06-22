@@ -309,7 +309,21 @@ if analizar:
     else:
         docs_procesados["DJ Origen No Preferencial"] = {"ok": False, "detalle": "No se subió DJ"}
 
-    # Guardar en session_state para persistencia
+    # Guardar en session_state para persistencia (ordenado por ítem para que
+    # el reporte sea legible: todos los resultados de un mismo ítem quedan
+    # juntos, en vez de mezclados según el orden interno de cada cruce).
+    def _clave_orden(r):
+        item = str(r.get("item", ""))
+        # CARÁTULA y GENERAL van al final; los numéricos (zfill4) se ordenan
+        # como número. Ítems con múltiples números (ej. "0001, 0002") se
+        # ordenan por el primero.
+        primero = item.split(",")[0].strip()
+        if primero.isdigit():
+            return (0, int(primero))
+        return (1, primero)
+
+    todos_resultados = sorted(todos_resultados, key=_clave_orden)
+
     st.session_state["resultados"] = todos_resultados
     st.session_state["config"] = config
     st.session_state["docs_procesados"] = docs_procesados
@@ -339,7 +353,19 @@ if "resultados" in st.session_state:
             return
         df = pd.DataFrame(lista)
         df.columns = ["Ítem", "Campo", "Mensaje", "Nivel"]
-        st.dataframe(df, use_container_width=True, hide_index=True)
+        st.dataframe(
+            df,
+            use_container_width=True,
+            hide_index=True,
+            column_config={
+                "Ítem": st.column_config.TextColumn(width="small"),
+                "Campo": st.column_config.TextColumn(width="medium"),
+                # Mensaje suele incluir listas largas (facturas, CMs, etc.)
+                # — ancho amplio para que no se corte el texto.
+                "Mensaje": st.column_config.TextColumn(width="large"),
+                "Nivel": st.column_config.TextColumn(width="small"),
+            },
+        )
 
     with tabs[0]: mostrar(errores)
     with tabs[1]: mostrar(alertas_list)
