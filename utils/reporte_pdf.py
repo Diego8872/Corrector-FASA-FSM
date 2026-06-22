@@ -57,7 +57,13 @@ def generar_reporte_pdf(todos_resultados: list, config: dict, numero_di: str = "
 
     estilo_celda = ParagraphStyle("celda",
         fontSize=7.5, fontName="Helvetica",
-        textColor=colors.black, leading=10)
+        textColor=colors.black, leading=10,
+        wordWrap="CJK")  # permite partir incluso strings largos sin espacios (ej. listas pegadas)
+
+    estilo_celda_docs = ParagraphStyle("celda_docs",
+        fontSize=8, fontName="Helvetica",
+        textColor=colors.black, leading=11,
+        wordWrap="CJK")
 
     # ─── ENCABEZADO ───────────────────────────────────────────────────────────
     story.append(Paragraph("🔍 Corrector de Despachos FASA/FSM", estilo_titulo))
@@ -97,23 +103,36 @@ def generar_reporte_pdf(todos_resultados: list, config: dict, numero_di: str = "
     story.append(Spacer(1, 10))
 
     # ─── DOCUMENTOS PROCESADOS ────────────────────────────────────────────────
+    # Usa Paragraph en vez de texto plano para que listas largas (facturas,
+    # CMs, DJs) hagan word-wrap dentro de la celda en lugar de desbordar o
+    # quedar cortadas.
     if docs_procesados:
         story.append(Paragraph("Documentos procesados", estilo_seccion))
-        docs_data = []
+        docs_data = [[
+            Paragraph("<b>Estado</b>", estilo_celda_docs),
+            Paragraph("<b>Documento</b>", estilo_celda_docs),
+            Paragraph("<b>Detalle</b>", estilo_celda_docs),
+        ]]
         for nombre_doc, info in docs_procesados.items():
             icono = "OK" if info.get("ok") else "---"
-            docs_data.append([icono, nombre_doc, info.get("detalle", "")])
-        tabla_docs = Table(docs_data, colWidths=[1*cm, 5.5*cm, 11.5*cm])
+            docs_data.append([
+                Paragraph(icono, estilo_celda_docs),
+                Paragraph(str(nombre_doc), estilo_celda_docs),
+                Paragraph(str(info.get("detalle", "")), estilo_celda_docs),
+            ])
+        tabla_docs = Table(docs_data, colWidths=[1.6*cm, 4*cm, 12.4*cm], repeatRows=1)
         tabla_docs.setStyle(TableStyle([
+            ("BACKGROUND", (0,0), (-1,0), AZUL_OSCURO),
+            ("TEXTCOLOR", (0,0), (-1,0), BLANCO),
             ("FONTSIZE", (0,0), (-1,-1), 8),
             ("FONTNAME", (0,0), (-1,-1), "Helvetica"),
-            ("ROWBACKGROUNDS", (0,0), (-1,-1), [GRIS_CLARO, BLANCO]),
+            ("ROWBACKGROUNDS", (0,1), (-1,-1), [GRIS_CLARO, BLANCO]),
             ("BOX", (0,0), (-1,-1), 0.5, colors.lightgrey),
             ("INNERGRID", (0,0), (-1,-1), 0.3, colors.lightgrey),
             ("TOPPADDING", (0,0), (-1,-1), 4),
             ("BOTTOMPADDING", (0,0), (-1,-1), 4),
             ("LEFTPADDING", (0,0), (-1,-1), 5),
-            ("VALIGN", (0,0), (-1,-1), "MIDDLE"),
+            ("VALIGN", (0,0), (-1,-1), "TOP"),
         ]))
         story.append(tabla_docs)
         story.append(Spacer(1, 10))
@@ -184,7 +203,11 @@ def generar_reporte_pdf(todos_resultados: list, config: dict, numero_di: str = "
                 Paragraph(str(r.get("mensaje", "")), estilo_celda),
             ])
 
-        t = Table(rows, colWidths=[1.8*cm, 4.2*cm, 12*cm], repeatRows=1)
+        # Columna Ítem y Campo angostas (contenido siempre corto); Mensaje
+        # se queda con la mayor parte del ancho disponible porque ahí van
+        # las listas largas de facturas/CMs/DJs que necesitan más espacio
+        # horizontal para no generar filas excesivamente altas.
+        t = Table(rows, colWidths=[1.4*cm, 3.2*cm, 13.4*cm], repeatRows=1)
         t.setStyle(TableStyle([
             ("BACKGROUND", (0,0), (-1,0), AZUL_OSCURO),
             ("TEXTCOLOR", (0,0), (-1,0), BLANCO),
