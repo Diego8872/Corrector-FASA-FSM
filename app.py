@@ -110,30 +110,25 @@ if analizar:
             st.error(f"Error leyendo el DI: {e}")
             st.stop()
 
-        # ── 2. Validaciones sin API ───────────────────────────────────────
-        st.write("🔎 Validando campos del DI...")
-        todos_resultados.extend(validar_items(df_items, df_subitems, df_caratula))
-        todos_resultados.extend(validar_subitems(df_subitems, df_items, df_caratula))
-
+        # ── 2. Cálculo de totales (las validaciones que usan df_items/subitems
+        #      se ejecutan más abajo, paso 9, una vez que existen datos_cm y
+        #      datos_facturas — necesarios para resolver la factura correcta
+        #      de cada ítem sin ambigüedad) ──────────────────────────────────
         fob_total = df_items["VALOR FOB"].apply(safe_float).sum() if "VALOR FOB" in df_items.columns else 0
         flete_total_di = df_items["FLETE EN DIV"].apply(safe_float).sum() if "FLETE EN DIV" in df_items.columns else 0
         seguro_total_di = df_items["SEGURO EN DIV"].apply(safe_float).sum() if "SEGURO EN DIV" in df_items.columns else 0
 
-        todos_resultados.extend(validar_prorrateo(df_items, fob_total, flete_total_di, seguro_total_di, df_subitems, df_caratula))
-        if not df_liq.empty:
-            todos_resultados.extend(validar_liquidacion(df_liq, df_items, df_subitems, df_caratula))
-        st.write(f"   ✅ {len(todos_resultados)} resultados")
+        # (validar_prorrateo y validar_liquidacion también se mueven al paso 9)
+        st.write(f"   ✅ Totales calculados: FOB {fob_total:.2f}")
 
-        # ── 3. Excel NCM / Clasificación ────────────────────────────────────
+        # ── 3. Excel NCM / Clasificación (solo lectura; validación en paso 9) ──
         df_ncm = None
         if ncm_file:
-            st.write("📑 Validando NCM...")
             try:
                 df_ncm = pd.read_excel(ncm_file, dtype=str)
-                todos_resultados.extend(validar_ncm_excel(df_subitems, df_ncm, df_items, df_caratula))
-                st.write("   ✅ NCM validados")
+                st.write("   ✅ Excel de clasificación leído")
             except Exception as e:
-                st.write(f"   ❌ Error NCM: {e}")
+                st.write(f"   ❌ Error leyendo Excel NCM: {e}")
 
         # ── 4. Facturas CAT (parser local, sin API) ─────────────────────────
         datos_facturas = {}
@@ -248,7 +243,18 @@ if analizar:
                             cache_cm[numero_completo] = datos
                             st.write(f"   ✅ {numero_ce} → RE: {num_re} | {len(datos.get('items', []))} ítems")
 
-        # ── 9. Cruces ─────────────────────────────────────────────────────
+        # ── 9. Validaciones de campos del DI (con factura/CM ya resueltos) ──
+        st.write("🔎 Validando campos del DI...")
+        todos_resultados.extend(validar_items(df_items, df_subitems, df_caratula, datos_cm, datos_facturas))
+        todos_resultados.extend(validar_subitems(df_subitems, df_items, df_caratula, datos_cm, datos_facturas))
+        todos_resultados.extend(validar_prorrateo(df_items, fob_total, flete_total_di, seguro_total_di, df_subitems, df_caratula, datos_cm, datos_facturas))
+        if not df_liq.empty:
+            todos_resultados.extend(validar_liquidacion(df_liq, df_items, df_subitems, df_caratula, datos_cm, datos_facturas))
+        if df_ncm is not None:
+            todos_resultados.extend(validar_ncm_excel(df_subitems, df_ncm, df_items, df_caratula, datos_cm, datos_facturas))
+        st.write(f"   ✅ {len(todos_resultados)} resultados")
+
+        # ── 10. Cruces ────────────────────────────────────────────────────
         st.write("🔀 Cruzando datos...")
         if datos_cm:
             todos_resultados.extend(validar_cm_vs_di(df_items, df_subitems, datos_cm))
