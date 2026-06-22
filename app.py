@@ -9,7 +9,7 @@ from utils.parser_di import leer_di, safe_float
 from utils.validaciones import validar_items, validar_subitems, validar_liquidacion, validar_prorrateo, validar_ncm_excel
 from utils.extractor_api import extraer_forwarding, extraer_bl, extraer_cm, extraer_dj_origen, extraer_numero_re_de_ce
 from utils.parser_factura_cat import extraer_factura_cat
-from utils.cruce_docs import validar_cm_vs_di, validar_factura_vs_di, validar_caratula_vs_docs, validar_dj_origen
+from utils.cruce_docs import validar_cm_vs_di, validar_factura_vs_di, validar_caratula_vs_docs, validar_caratula_totales, validar_dj_origen
 from utils.reporte_pdf import generar_reporte_pdf
 
 st.set_page_config(page_title="Corrector FASA/FSM", page_icon="🔍", layout="wide")
@@ -254,6 +254,7 @@ if analizar:
             todos_resultados.extend(validar_cm_vs_di(df_items, df_subitems, datos_cm))
         if datos_facturas:
             todos_resultados.extend(validar_factura_vs_di(df_items, df_subitems, datos_facturas, df_ncm))
+            todos_resultados.extend(validar_caratula_totales(caratula, datos_facturas, datos_forwarding))
         if datos_forwarding or datos_bl:
             todos_resultados.extend(validar_caratula_vs_docs(caratula, datos_forwarding, datos_bl, datos_facturas, config))
         if datos_dj:
