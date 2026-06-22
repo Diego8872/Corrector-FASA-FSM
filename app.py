@@ -275,8 +275,8 @@ if analizar:
     if ce_files:
         cms_ok = [k for k,v in datos_cm.items() if "error" not in v]
         cms_err = [k for k,v in datos_cm.items() if "error" in v]
-        det = f"{len(cms_ok)} CM(s) procesados"
-        if cms_err: det += f" | {len(cms_err)} con error"
+        det = f"{len(cms_ok)} CM(s): {', '.join(cms_ok)}" if cms_ok else "0 CM(s) procesados"
+        if cms_err: det += f" | Con error: {', '.join(cms_err)}"
         docs_procesados["Certificados Mineros"] = {"ok": len(cms_err)==0, "detalle": det}
     else:
         docs_procesados["Certificados Mineros"] = {"ok": False, "detalle": "No se subieron CMs"}
@@ -292,13 +292,20 @@ if analizar:
         docs_procesados["Bill of Lading"] = {"ok": False, "detalle": "No procesado"}
 
     if datos_facturas:
-        facs_ok = len([k for k,v in datos_facturas.items() if "error" not in v])
-        docs_procesados["Facturas"] = {"ok": facs_ok > 0, "detalle": f"{facs_ok} factura(s) procesadas"}
+        facs_ok_nums = [v.get("numero_factura", k) for k, v in datos_facturas.items() if "error" not in v]
+        facs_err = [k for k, v in datos_facturas.items() if "error" in v]
+        det = f"{len(facs_ok_nums)} factura(s): {', '.join(facs_ok_nums)}" if facs_ok_nums else "0 facturas procesadas"
+        if facs_err: det += f" | Con error: {', '.join(facs_err)}"
+        docs_procesados["Facturas"] = {"ok": len(facs_ok_nums) > 0, "detalle": det}
     else:
         docs_procesados["Facturas"] = {"ok": False, "detalle": "No se subieron facturas"}
 
     if datos_dj:
-        docs_procesados["DJ Origen No Preferencial"] = {"ok": True, "detalle": f"{len(datos_dj)} DJ(s) procesadas"}
+        dj_ok_nums = [d.get("numero_if", "?") for d in datos_dj if "error" not in d]
+        dj_err = sum(1 for d in datos_dj if "error" in d)
+        det = f"{len(dj_ok_nums)} DJ(s): {', '.join(dj_ok_nums)}" if dj_ok_nums else "0 DJ(s) procesadas"
+        if dj_err: det += f" | {dj_err} con error"
+        docs_procesados["DJ Origen No Preferencial"] = {"ok": dj_err == 0, "detalle": det}
     else:
         docs_procesados["DJ Origen No Preferencial"] = {"ok": False, "detalle": "No se subió DJ"}
 
