@@ -671,3 +671,121 @@ def validar_bultos_vs_bl(df_bultos: pd.DataFrame, datos_bl: dict) -> list:
         resultados.append(ok_(f"Peso bruto OK: {peso_bruto_di:.2f} kg"))
 
     return resultados
+
+
+# ── Validación Documentos Declarados (Facturas/Forwarding/Vendedor) ──────────
+
+def _normalizar_nombre(texto: str) -> str:
+    """
+    Normaliza un nombre de empresa/proveedor para comparación tolerante:
+    mayúsculas, sin tildes, sin paréntesis (se conserva el contenido de
+    adentro), sin espacios extra ni puntuación.
+    Ej: 'Caterpillar Sarl (Latin America)' -> 'CATERPILLARSARLLATINAMERICA'
+    """
+    import unicodedata
+    s = (texto or "").upper()
+    s = unicodedata.normalize("NFKD", s)
+    s = "".join(c for c in s if not unicodedata.combining(c))
+    s = s.replace("(", "").replace(")", "")
+    s = re.sub(r"[^A-Z0-9]", "", s)
+    return s
+
+
+def _extraer_columna_caratula(df_caratula: "pd.DataFrame", encabezado: str) -> list:
+    """
+    Busca, dentro de la grilla cruda de la solapa Carátula (leída sin
+    header), la celda que contiene el texto `encabezado` (ej. "FACTURAS")
+    y devuelve todos los valores no vacíos que aparecen debajo de esa
+    celda, en la misma columna, hasta la primera fila vacía.
+    """
+    if df_caratula is None or df_caratula.empty:
+        return []
+
+    encabezado_upper = encabezado.strip().upper()
+    for col in df_caratula.columns:
+        for fila_idx, valor in enumerate(df_caratula[col]):
+            if str(valor).strip().upper() == encabezado_upper:
+                valores = []
+                for v in df_caratula[col].iloc[fila_idx + 1:]:
+                    v_str = str(v).strip()
+                    if not v_str or v_str.lower() == "nan":
+                        break
+                    valores.append(v_str)
+                return valores
+    return []
+
+
+def validar_documentos_declarados(df_caratula: "pd.DataFrame", datos_facturas: dict,
+                                   datos_forwarding: dict = None) -> list:
+    """
+    Valida, contra la solapa Carátula del DI:
+      - FACTURAS: que todas las facturas declaradas en la columna FACTURAS
+        (incluida la Forwarding Invoice, que comparte la misma columna)
+        tengan su documento correspondiente subido y procesado.
+      - VENDEDOR: que el proveedor declarado coincida con el vendedor que
+        figura en cada factura parseada (normalizado, comparación por
+        substring para tolerar diferencias de paréntesis/espacios).
+    """
+    resultados = []
+    CAMPO_FAC = "FACTURAS"
+    CAMPO_VEND = "VENDEDOR"
+
+    def al(campo, msg, nivel="ERROR"):
+        return {"item": "GENERAL", "campo": campo, "mensaje": msg, "nivel": nivel}
+    def ok_(campo, msg):
+        return {"item": "GENERAL", "campo": campo, "mensaje": msg, "nivel": "OK"}
+
+    facturas_declaradas = _extraer_columna_caratula(df_caratula, "FACTURAS")
+    vendedor_declarado   = _extraer_columna_caratula(df_caratula, "VENDEDOR")
+    vendedor_declarado   = vendedor_declarado[0] if vendedor_declarado else ""
+
+    # ── Facturas (y Forwarding) declaradas vs subidas ──
+    if facturas_declaradas:
+        facturas_validas = {k: v for k, v in (datos_facturas or {}).items() if "error" not in v}
+        nombres_subidos = set()
+        for nro_factura, f in facturas_validas.items():
+            nombres_subidos.add(re.sub(r"\.pdf$", "", nro_factura, flags=re.IGNORECASE).strip().upper())
+            num_real = str(f.get("numero_factura", "")).strip().upper()
+            if num_real:
+                nombres_subidos.add(num_real)
+
+        if datos_forwarding and "error" not in datos_forwarding:
+            nro_fwd = str(datos_forwarding.get("numero_invoice", "")).strip().upper()
+            if nro_fwd:
+                nombres_subidos.add(nro_fwd)
+
+        faltantes = [
+            f for f in facturas_declaradas
+            if f.strip().upper() not in nombres_subidos
+        ]
+
+        if faltantes:
+            resultados.append(al(CAMPO_FAC,
+                f"Declaradas en el DI pero no subidas/encontradas: {', '.join(faltantes)}"))
+        else:
+            resultados.append(ok_(CAMPO_FAC,
+                f"Todas las facturas declaradas en el DI ({len(facturas_declaradas)}) fueron subidas: "
+                f"{', '.join(facturas_declaradas)}"))
+
+    # ── Vendedor declarado vs vendedor de cada factura ──
+    if vendedor_declarado and datos_facturas:
+        vendedor_norm = _normalizar_nombre(vendedor_declarado)
+        facturas_validas = {k: v for k, v in (datos_facturas or {}).items() if "error" not in v}
+        discrepancias = []
+        for nro_factura, f in facturas_validas.items():
+            vendedor_factura = str(f.get("vendedor", "")).strip()
+            if not vendedor_factura:
+                continue
+            vendedor_factura_norm = _normalizar_nombre(vendedor_factura)
+            coincide = vendedor_norm in vendedor_factura_norm or vendedor_factura_norm in vendedor_norm
+            if not coincide:
+                discrepancias.append(f"{nro_factura} (vendedor: '{vendedor_factura}')")
+
+        if discrepancias:
+            resultados.append(al(CAMPO_VEND,
+                f"Vendedor declarado en DI: '{vendedor_declarado}' — no coincide con: {', '.join(discrepancias)}"))
+        else:
+            resultados.append(ok_(CAMPO_VEND,
+                f"Vendedor verificado en todas las facturas: {vendedor_declarado}"))
+
+    return resultados
