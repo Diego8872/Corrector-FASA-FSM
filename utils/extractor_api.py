@@ -79,14 +79,38 @@ Respondé SOLO con JSON válido, sin texto adicional."""
   "vessel": "...",
   "shipper": "...",
   "consignee": "...",
-  "facturas_incluidas": []
+  "facturas_incluidas": [],
+  "cantidad_contenedores": 0,
+  "cantidad_bultos": 0,
+  "peso_bruto_kg": 0
 }
 
 IMPORTANTE:
 - fecha_embarque: buscar "SHIPPED ON BOARD" en el texto del documento
 - itns: buscar todos los números que aparezcan como "AES-ITN" en el documento
 - bl_number: el número de BL del encabezado (sin código de puerto)
-- facturas_incluidas: números de facturas mencionadas en la descripción de la mercadería"""
+- facturas_incluidas: números de facturas mencionadas en la descripción de la mercadería
+
+El formato y la terminología del BL varían según la naviera (Maersk, MSC, Hapag-Lloyd, CMA CGM,
+COSCO, etc.) — no asumas que un término exacto va a estar siempre presente. Para los siguientes
+3 campos, razoná sobre la estructura del documento (normalmente hay un cuadro/resumen de carga
+con totales, cerca de la descripción de mercadería o del pie del documento) y usá la información
+disponible, sea cual sea el rótulo exacto que use esa naviera:
+
+- cantidad_contenedores: cantidad total de contenedores del embarque. Puede figurar como
+  "No. of Containers", "Container(s)", "Qty of Containers", "TOTAL CONTAINERS", o simplemente
+  inferirse contando los números de contenedor individuales listados (formato tipo ABCD1234567)
+  si no hay un total explícito. Si el BL no es de carga en contenedores (ej. carga suelta/break
+  bulk), devolver 0.
+- cantidad_bultos: cantidad total de bultos/piezas/paquetes sueltos declarados. Puede figurar
+  como "No. of Packages", "PACKAGES", "PKGS", "Number of Packages", "Total Packages", o el
+  total de la columna de bultos en el cuadro de mercadería. Si la carga es solo en contenedores
+  cerrados sin desglose de bultos sueltos (FCL sin detalle interno), devolver 0.
+- peso_bruto_kg: peso bruto TOTAL del embarque, en kilogramos. Puede figurar como
+  "GROSS WEIGHT", "G.W.", "Gross Wt", "Weight", "Total Weight". Si el documento expresa el peso
+  en otra unidad (ej. libras, toneladas), convertilo a kilogramos antes de devolverlo. Si hay
+  varios pesos parciales (por contenedor o por bulto) y no hay un total explícito, sumalos para
+  obtener el total. Devolver solo el número, sin unidad ni texto."""
 
     try:
         texto = _llamar_claude(system, prompt, [pdf_bytes])
