@@ -223,6 +223,22 @@ def validar_factura_vs_di(
                     fob_esperado = round(precio_parte + (total_cargos * proporcion), 2)
 
                 codigo_ref = match_fac.get("codigo_parte", modelo_di)
+                codigo_ref_norm = normalizar_codigo(codigo_ref)
+
+                # Validación CÓDIGO (DI vs Factura) — explícita, aunque el
+                # match ya implica coincidencia normalizada; deja constancia
+                # en el reporte de que se revisó y dio bien.
+                if codigo_ref_norm != modelo_di:
+                    resultados.append(alerta(
+                        item_num, "CÓDIGO (FACTURA)",
+                        f"Código DI: '{modelo_di}' — Código factura: '{codigo_ref}' | Factura: {nro_factura}",
+                        "ALERTA"
+                    ))
+                else:
+                    resultados.append(ok(
+                        item_num, "CÓDIGO (FACTURA)",
+                        f"Código DI: {modelo_di} — Código factura: {codigo_ref} | Factura: {nro_factura}"
+                    ))
 
                 # Validación FOB
                 if abs(fob_di - fob_esperado) > TOLERANCIA_FOB:
