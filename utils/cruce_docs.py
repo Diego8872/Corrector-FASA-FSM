@@ -592,3 +592,74 @@ def validar_dj_origen(df_items: pd.DataFrame, df_subitems: pd.DataFrame, datos_d
                         "mensaje": f"CIF unitario OK: {cif_dj:.2f}", "nivel": "OK"})
 
     return resultados
+
+
+# ── Validación Bultos vs BL ───────────────────────────────────────────────────
+
+def validar_bultos_vs_bl(df_bultos: pd.DataFrame, datos_bl: dict) -> list:
+    """
+    Valida la solapa Bultos del DI (EMBALAJE, TIPO EMBALAJE, CANTIDAD, PESO
+    BRUTO) contra los totales extraídos del BL.
+
+    Reglas:
+      - Filas donde EMBALAJE contiene "CONTENEDOR": se suma su CANTIDAD y se
+        compara contra cantidad_contenedores del BL.
+      - Filas donde EMBALAJE NO contiene "CONTENEDOR": se suma su CANTIDAD y
+        se compara contra cantidad_bultos del BL.
+      - PESO BRUTO: se suma de TODAS las filas (sin filtrar) y se compara
+        contra peso_bruto_kg del BL.
+    Comparación exacta, sin tolerancia (a pedido del usuario).
+    No es una validación por ítem del DI, sino de totales del despacho —
+    se reporta a nivel "GENERAL".
+    """
+    resultados = []
+
+    def al(campo, msg, nivel="ERROR"):
+        return {"item": "GENERAL", "campo": campo, "mensaje": msg, "nivel": nivel}
+    def ok_(campo, msg):
+        return {"item": "GENERAL", "campo": campo, "mensaje": msg, "nivel": "OK"}
+
+    if df_bultos is None or df_bultos.empty:
+        resultados.append(al("BULTOS", "No se encontró la solapa Bultos en el DI — no se pudo validar", "ALERTA"))
+        return resultados
+
+    if not datos_bl or "error" in datos_bl:
+        resultados.append(al("BULTOS", "No se pudo extraer el BL — no se pudo validar bultos/peso", "ALERTA"))
+        return resultados
+
+    es_contenedor = df_bultos["EMBALAJE"].str.upper().str.contains("CONTENEDOR", na=False)
+
+    cantidad_contenedores_di = df_bultos.loc[es_contenedor, "CANTIDAD"].apply(safe_float).sum()
+    cantidad_bultos_di       = df_bultos.loc[~es_contenedor, "CANTIDAD"].apply(safe_float).sum()
+    peso_bruto_di            = df_bultos["PESO BRUTO"].apply(safe_float).sum()
+
+    cantidad_contenedores_bl = safe_float(datos_bl.get("cantidad_contenedores", 0))
+    cantidad_bultos_bl       = safe_float(datos_bl.get("cantidad_bultos", 0))
+    peso_bruto_bl            = safe_float(datos_bl.get("peso_bruto_kg", 0))
+
+    # ── Contenedores ──
+    if cantidad_contenedores_di > 0 or cantidad_contenedores_bl > 0:
+        if cantidad_contenedores_di != cantidad_contenedores_bl:
+            resultados.append(al("CANTIDAD CONTENEDORES",
+                f"DI: {cantidad_contenedores_di:.0f} — BL: {cantidad_contenedores_bl:.0f}"))
+        else:
+            resultados.append(ok_("CANTIDAD CONTENEDORES",
+                f"Cantidad de contenedores OK: {cantidad_contenedores_di:.0f}"))
+
+    # ── Bultos sueltos ──
+    if cantidad_bultos_di > 0 or cantidad_bultos_bl > 0:
+        if cantidad_bultos_di != cantidad_bultos_bl:
+            resultados.append(al("CANTIDAD BULTOS",
+                f"DI: {cantidad_bultos_di:.0f} — BL: {cantidad_bultos_bl:.0f}"))
+        else:
+            resultados.append(ok_("CANTIDAD BULTOS",
+                f"Cantidad de bultos OK: {cantidad_bultos_di:.0f}"))
+
+    # ── Peso bruto ──
+    if peso_bruto_di != peso_bruto_bl:
+        resultados.append(al("PESO BRUTO",
+            f"DI: {peso_bruto_di:.2f} kg — BL: {peso_bruto_bl:.2f} kg"))
+    else:
+        resultados.append(ok_("PESO BRUTO", f"Peso bruto OK: {peso_bruto_di:.2f} kg"))
+
+    return resultados
