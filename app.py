@@ -341,18 +341,30 @@ if "resultados" in st.session_state:
     config_actual = st.session_state.get("config", config)
     docs_procesados = st.session_state.get("docs_procesados", {})
 
-    errores = [r for r in todos_resultados if r["nivel"] == "ERROR"]
-    alertas_list = [r for r in todos_resultados if r["nivel"] == "ALERTA"]
-    oks = [r for r in todos_resultados if r["nivel"] == "OK"]
+    # Revisión General: chequeos a nivel despacho completo (carátula, BL,
+    # bultos, países prohibidos, etc.), no por ítem. Se separan del resto
+    # para que el lector vea primero el panorama global y después el
+    # detalle ítem por ítem, sin que se mezclen ni se dupliquen.
+    resultados_generales = [r for r in todos_resultados if str(r.get("item", "")) == "GENERAL"]
+    resultados_items = [r for r in todos_resultados if str(r.get("item", "")) != "GENERAL"]
+
+    errores = [r for r in resultados_items if r["nivel"] == "ERROR"]
+    alertas_list = [r for r in resultados_items if r["nivel"] == "ALERTA"]
+    oks = [r for r in resultados_items if r["nivel"] == "OK"]
+
+    errores_generales = [r for r in resultados_generales if r["nivel"] == "ERROR"]
+    alertas_generales = [r for r in resultados_generales if r["nivel"] == "ALERTA"]
 
     st.subheader("📊 Resumen")
     c1, c2, c3 = st.columns(3)
     with c1: st.metric("❌ Errores", len(errores))
     with c2: st.metric("⚠️ Alertas", len(alertas_list))
     with c3: st.metric("✅ OK", len(oks))
+    if errores_generales or alertas_generales:
+        st.warning(f"🌐 Revisión General: {len(errores_generales)} error(es) y {len(alertas_generales)} alerta(s) a nivel despacho — ver pestaña correspondiente.")
 
     st.subheader("📋 Detalle")
-    tabs = st.tabs(["❌ Errores", "⚠️ Alertas", "✅ OK", "📄 Todo"])
+    tabs = st.tabs(["🌐 Revisión General", "❌ Errores", "⚠️ Alertas", "✅ OK", "📄 Todo"])
 
     def mostrar(lista):
         if not lista:
@@ -374,10 +386,12 @@ if "resultados" in st.session_state:
             },
         )
 
-    with tabs[0]: mostrar(errores)
-    with tabs[1]: mostrar(alertas_list)
-    with tabs[2]: mostrar(oks)
-    with tabs[3]: mostrar(todos_resultados)
+    with tabs[0]: mostrar(resultados_generales)
+    with tabs[1]: mostrar(errores)
+    with tabs[2]: mostrar(alertas_list)
+    with tabs[3]: mostrar(oks)
+    with tabs[4]: mostrar(todos_resultados)
+
 
     # ─── EXPORT ───────────────────────────────────────────────────────────────
     st.subheader("📥 Exportar reporte")
