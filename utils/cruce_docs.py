@@ -312,9 +312,9 @@ def validar_caratula_totales(caratula: dict, datos_facturas: dict, datos_forward
     resultados = []
 
     def al(campo, msg, nivel="ALERTA"):
-        return {"item": "CARÁTULA", "campo": campo, "mensaje": msg, "nivel": nivel}
+        return {"item": "GENERAL", "campo": campo, "mensaje": msg, "nivel": nivel}
     def ok_(campo, msg):
-        return {"item": "CARÁTULA", "campo": campo, "mensaje": msg, "nivel": "OK"}
+        return {"item": "GENERAL", "campo": campo, "mensaje": msg, "nivel": "OK"}
 
     facturas_validas = {k: v for k, v in (datos_facturas or {}).items() if "error" not in v}
 
@@ -391,9 +391,9 @@ def validar_caratula_vs_docs(caratula: dict, datos_forwarding: dict, datos_bl: d
     resultados = []
 
     def al(campo, msg, nivel="ALERTA"):
-        return {"item": "CARÁTULA", "campo": campo, "mensaje": msg, "nivel": nivel}
+        return {"item": "GENERAL", "campo": campo, "mensaje": msg, "nivel": nivel}
     def ok_(campo, msg):
-        return {"item": "CARÁTULA", "campo": campo, "mensaje": msg, "nivel": "OK"}
+        return {"item": "GENERAL", "campo": campo, "mensaje": msg, "nivel": "OK"}
 
     banco = _buscar_caratula(caratula, "I:BANCOSARGENTINA")
     if banco and banco != "016":
@@ -426,14 +426,7 @@ def validar_caratula_vs_docs(caratula: dict, datos_forwarding: dict, datos_bl: d
             resultados.append(al("FORWARDING", f"Cargo adicional detectado: {a}", "ALERTA"))
 
     if datos_bl and "error" not in datos_bl:
-        bl_doc   = datos_bl.get("bl_number", "").strip().upper()
         itns_bl  = datos_bl.get("itns", [])
-        bl_di    = _buscar_caratula(caratula, "DOCUMENTO") or ""
-        if bl_di:
-            if bl_doc and bl_doc not in bl_di.upper() and bl_di.upper() not in bl_doc:
-                resultados.append(al("BL", f"BL en DI: '{bl_di}' — BL en documento: '{bl_doc}'", "ERROR"))
-            else:
-                resultados.append(ok_("BL", f"BL correcto: {bl_doc}"))
 
         itn_di = _buscar_caratula(caratula, "I:ITN-EEUU") or ""
         for itn in itns_bl:
@@ -598,10 +591,12 @@ def validar_dj_origen(df_items: pd.DataFrame, df_subitems: pd.DataFrame, datos_d
 
 def validar_bultos_vs_bl(df_bultos: pd.DataFrame, datos_bl: dict) -> list:
     """
-    Valida la solapa Bultos del DI (EMBALAJE, TIPO EMBALAJE, CANTIDAD, PESO
-    BRUTO) contra los totales extraídos del BL.
+    Valida la solapa Bultos del DI (DOCUMENTO, EMBALAJE, TIPO EMBALAJE,
+    CANTIDAD, PESO BRUTO) contra los totales extraídos del BL.
 
     Reglas:
+      - DOCUMENTO: el número de BL declarado en la solapa Bultos del DI
+        debe coincidir con el bl_number extraído del PDF subido.
       - Filas donde EMBALAJE contiene "CONTENEDOR": se suma su CANTIDAD y se
         compara contra cantidad_contenedores del BL.
       - Filas donde EMBALAJE NO contiene "CONTENEDOR": se suma su CANTIDAD y
@@ -610,22 +605,40 @@ def validar_bultos_vs_bl(df_bultos: pd.DataFrame, datos_bl: dict) -> list:
         contra peso_bruto_kg del BL.
     Comparación exacta, sin tolerancia (a pedido del usuario).
     No es una validación por ítem del DI, sino de totales del despacho —
-    se reporta a nivel "GENERAL".
+    se reporta a nivel "GENERAL", campo "BULTOS" (agrupado junto al resto
+    de chequeos globales del despacho).
     """
     resultados = []
+    CAMPO = "BULTOS"
 
-    def al(campo, msg, nivel="ERROR"):
-        return {"item": "GENERAL", "campo": campo, "mensaje": msg, "nivel": nivel}
-    def ok_(campo, msg):
-        return {"item": "GENERAL", "campo": campo, "mensaje": msg, "nivel": "OK"}
+    def al(msg, nivel="ERROR"):
+        return {"item": "GENERAL", "campo": CAMPO, "mensaje": msg, "nivel": nivel}
+    def ok_(msg):
+        return {"item": "GENERAL", "campo": CAMPO, "mensaje": msg, "nivel": "OK"}
 
     if df_bultos is None or df_bultos.empty:
-        resultados.append(al("BULTOS", "No se encontró la solapa Bultos en el DI — no se pudo validar", "ALERTA"))
+        resultados.append(al("No se encontró la solapa Bultos en el DI — no se pudo validar", "ALERTA"))
         return resultados
 
     if not datos_bl or "error" in datos_bl:
-        resultados.append(al("BULTOS", "No se pudo extraer el BL — no se pudo validar bultos/peso", "ALERTA"))
+        resultados.append(al("No se pudo extraer el BL — no se pudo validar bultos/peso", "ALERTA"))
         return resultados
+
+    # ── Número de BL (DOCUMENTO) ──
+    bl_bl = str(datos_bl.get("bl_number", "")).strip().upper()
+    documentos_di = set()
+    if "DOCUMENTO" in df_bultos.columns:
+        documentos_di = {str(d).strip().upper() for d in df_bultos["DOCUMENTO"] if str(d).strip()}
+
+    if documentos_di or bl_bl:
+        # Coincidencia flexible (substring en cualquier dirección) para
+        # tolerar formatos con/sin prefijo de naviera.
+        coincide = any(bl_bl and (bl_bl in doc or doc in bl_bl) for doc in documentos_di)
+        if documentos_di and bl_bl and not coincide:
+            documentos_str = ", ".join(sorted(documentos_di))
+            resultados.append(al(f"BL declarado en DI: '{documentos_str}' — BL en documento subido: '{bl_bl}'"))
+        elif documentos_di and bl_bl and coincide:
+            resultados.append(ok_(f"BL declarado coincide con el subido: {bl_bl}"))
 
     es_contenedor = df_bultos["EMBALAJE"].str.upper().str.contains("CONTENEDOR", na=False)
 
@@ -640,26 +653,21 @@ def validar_bultos_vs_bl(df_bultos: pd.DataFrame, datos_bl: dict) -> list:
     # ── Contenedores ──
     if cantidad_contenedores_di > 0 or cantidad_contenedores_bl > 0:
         if cantidad_contenedores_di != cantidad_contenedores_bl:
-            resultados.append(al("CANTIDAD CONTENEDORES",
-                f"DI: {cantidad_contenedores_di:.0f} — BL: {cantidad_contenedores_bl:.0f}"))
+            resultados.append(al(f"Cantidad de contenedores — DI: {cantidad_contenedores_di:.0f} — BL: {cantidad_contenedores_bl:.0f}"))
         else:
-            resultados.append(ok_("CANTIDAD CONTENEDORES",
-                f"Cantidad de contenedores OK: {cantidad_contenedores_di:.0f}"))
+            resultados.append(ok_(f"Cantidad de contenedores OK: {cantidad_contenedores_di:.0f}"))
 
     # ── Bultos sueltos ──
     if cantidad_bultos_di > 0 or cantidad_bultos_bl > 0:
         if cantidad_bultos_di != cantidad_bultos_bl:
-            resultados.append(al("CANTIDAD BULTOS",
-                f"DI: {cantidad_bultos_di:.0f} — BL: {cantidad_bultos_bl:.0f}"))
+            resultados.append(al(f"Cantidad de bultos — DI: {cantidad_bultos_di:.0f} — BL: {cantidad_bultos_bl:.0f}"))
         else:
-            resultados.append(ok_("CANTIDAD BULTOS",
-                f"Cantidad de bultos OK: {cantidad_bultos_di:.0f}"))
+            resultados.append(ok_(f"Cantidad de bultos OK: {cantidad_bultos_di:.0f}"))
 
     # ── Peso bruto ──
     if peso_bruto_di != peso_bruto_bl:
-        resultados.append(al("PESO BRUTO",
-            f"DI: {peso_bruto_di:.2f} kg — BL: {peso_bruto_bl:.2f} kg"))
+        resultados.append(al(f"Peso bruto — DI: {peso_bruto_di:.2f} kg — BL: {peso_bruto_bl:.2f} kg"))
     else:
-        resultados.append(ok_("PESO BRUTO", f"Peso bruto OK: {peso_bruto_di:.2f} kg"))
+        resultados.append(ok_(f"Peso bruto OK: {peso_bruto_di:.2f} kg"))
 
     return resultados
