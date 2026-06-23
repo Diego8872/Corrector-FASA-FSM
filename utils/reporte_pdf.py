@@ -19,6 +19,7 @@ NARANJA     = colors.HexColor("#ED7D31")
 VERDE       = colors.HexColor("#70AD47")
 GRIS_CLARO  = colors.HexColor("#F2F2F2")
 GRIS_TEXTO  = colors.HexColor("#595959")
+MORADO      = colors.HexColor("#5B3FA0")
 BLANCO      = colors.white
 
 
@@ -137,15 +138,27 @@ def generar_reporte_pdf(todos_resultados: list, config: dict, numero_di: str = "
         story.append(tabla_docs)
         story.append(Spacer(1, 10))
 
+    # ─── SEPARACIÓN GENERAL vs ÍTEMS ──────────────────────────────────────────
+    # Revisión General: chequeos a nivel despacho completo (carátula, BL,
+    # bultos, países prohibidos, etc.), no por ítem. Se muestran en su
+    # propia sección y se excluyen del resto para no duplicar.
+    resultados_generales = [r for r in todos_resultados if str(r.get("item", "")) == "GENERAL"]
+    resultados_items     = [r for r in todos_resultados if str(r.get("item", "")) != "GENERAL"]
+
     # ─── RESUMEN EJECUTIVO ────────────────────────────────────────────────────
-    errores  = [r for r in todos_resultados if r["nivel"] == "ERROR"]
-    alertas  = [r for r in todos_resultados if r["nivel"] == "ALERTA"]
-    oks      = [r for r in todos_resultados if r["nivel"] == "OK"]
+    errores  = [r for r in resultados_items if r["nivel"] == "ERROR"]
+    alertas  = [r for r in resultados_items if r["nivel"] == "ALERTA"]
+    oks      = [r for r in resultados_items if r["nivel"] == "OK"]
+
+    errores_generales = [r for r in resultados_generales if r["nivel"] == "ERROR"]
+    alertas_generales = [r for r in resultados_generales if r["nivel"] == "ALERTA"]
+    oks_generales      = [r for r in resultados_generales if r["nivel"] == "OK"]
 
     story.append(Paragraph("Resumen Ejecutivo", estilo_seccion))
 
     resumen_data = [
         ["", "Cantidad", "Descripción"],
+        ["🌐  GENERAL",   str(len(resultados_generales)), "Revisión a nivel despacho completo (carátula, BL, bultos, países, etc.)"],
         ["❌  ERRORES",   str(len(errores)),  "Inconsistencias críticas que deben corregirse antes de oficializar"],
         ["⚠️  ALERTAS",   str(len(alertas)),  "Situaciones a verificar — pueden ser correctas según el caso"],
         ["✅  OK",        str(len(oks)),       "Validaciones superadas correctamente"],
@@ -162,18 +175,21 @@ def generar_reporte_pdf(todos_resultados: list, config: dict, numero_di: str = "
         # Filas
         ("FONTNAME", (0,1), (0,-1), "Helvetica-Bold"),
         ("FONTSIZE", (0,1), (-1,-1), 8),
-        ("BACKGROUND", (0,1), (-1,1), colors.HexColor("#FDECEA")),  # ERROR
-        ("BACKGROUND", (0,2), (-1,2), colors.HexColor("#FFF8E1")),  # ALERTA
-        ("BACKGROUND", (0,3), (-1,3), colors.HexColor("#F1F8E9")),  # OK
-        ("TEXTCOLOR", (0,1), (0,1), ROJO),
-        ("TEXTCOLOR", (0,2), (0,2), NARANJA),
-        ("TEXTCOLOR", (0,3), (0,3), VERDE),
+        ("BACKGROUND", (0,1), (-1,1), colors.HexColor("#EEE8F7")),  # GENERAL
+        ("BACKGROUND", (0,2), (-1,2), colors.HexColor("#FDECEA")),  # ERROR
+        ("BACKGROUND", (0,3), (-1,3), colors.HexColor("#FFF8E1")),  # ALERTA
+        ("BACKGROUND", (0,4), (-1,4), colors.HexColor("#F1F8E9")),  # OK
+        ("TEXTCOLOR", (0,1), (0,1), MORADO),
+        ("TEXTCOLOR", (0,2), (0,2), ROJO),
+        ("TEXTCOLOR", (0,3), (0,3), NARANJA),
+        ("TEXTCOLOR", (0,4), (0,4), VERDE),
         ("ALIGN", (1,0), (1,-1), "CENTER"),
         ("FONTNAME", (1,1), (1,-1), "Helvetica-Bold"),
         ("FONTSIZE", (1,1), (1,-1), 12),
-        ("TEXTCOLOR", (1,1), (1,1), ROJO),
-        ("TEXTCOLOR", (1,2), (1,2), NARANJA),
-        ("TEXTCOLOR", (1,3), (1,3), VERDE),
+        ("TEXTCOLOR", (1,1), (1,1), MORADO),
+        ("TEXTCOLOR", (1,2), (1,2), ROJO),
+        ("TEXTCOLOR", (1,3), (1,3), NARANJA),
+        ("TEXTCOLOR", (1,4), (1,4), VERDE),
         ("BOX", (0,0), (-1,-1), 0.5, colors.lightgrey),
         ("INNERGRID", (0,0), (-1,-1), 0.3, colors.lightgrey),
         ("TOPPADDING", (0,0), (-1,-1), 6),
@@ -222,6 +238,16 @@ def generar_reporte_pdf(todos_resultados: list, config: dict, numero_di: str = "
             ("VALIGN", (0,0), (-1,-1), "TOP"),
         ]))
         story.append(t)
+
+    # ─── REVISIÓN GENERAL ─────────────────────────────────────────────────────
+    # Va primero: panorama global del despacho (carátula, BL/bultos, países
+    # prohibidos, etc.), antes del detalle ítem por ítem. Mezcla sus propios
+    # niveles ERROR/ALERTA/OK adentro, ya que son pocas filas en total y no
+    # amerita subdividir en 3 secciones separadas como con los ítems.
+    if resultados_generales:
+        story.append(Paragraph("🌐 Revisión General", estilo_seccion))
+        tabla_detalle(resultados_generales, colors.HexColor("#EEE8F7"), MORADO)
+        story.append(Spacer(1, 10))
 
     # ─── ERRORES ──────────────────────────────────────────────────────────────
     if errores:
