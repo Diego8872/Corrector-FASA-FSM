@@ -132,6 +132,8 @@ def validar_items(df_items: pd.DataFrame, df_subitems: pd.DataFrame = None, df_c
                    datos_cm: dict = None, datos_facturas: dict = None) -> list:
     ref_map = _build_ref_map(df_items, df_subitems, df_caratula, datos_cm, datos_facturas)
     resultados = []
+    hubo_origen_prohibido = False
+
     for _, row in df_items.iterrows():
         item = str(row.get("ITEM", "?")).strip().zfill(4)
         r = ref_map.get(item, {})
@@ -144,6 +146,7 @@ def validar_items(df_items: pd.DataFrame, df_subitems: pd.DataFrame = None, df_c
 
         origen = row.get("ORIGEN", "").strip()
         if _pais_prohibido(origen):
+            hubo_origen_prohibido = True
             resultados.append(alerta(item, "ORIGEN", f"País de origen PROHIBIDO: {origen}{suf}", "ERROR"))
 
         procedencia = row.get("PROCEDENCIA", "").strip()
@@ -190,6 +193,14 @@ def validar_items(df_items: pd.DataFrame, df_subitems: pd.DataFrame = None, df_c
             val = row.get(campo, "").strip()
             if val:
                 resultados.append(alerta(item, campo, f"Declarado: '{val}' — informativo, verificar{suf}"))
+
+    # ── Resumen general de países prohibidos (país de ORIGEN) ──────────────
+    # Un solo mensaje a nivel despacho en vez de repetir por ítem: si ningún
+    # ítem disparó ERROR de origen prohibido, se informa que se revisó y no
+    # se encontró ninguno. Si hubo algún caso, ya quedó informado arriba
+    # como ERROR por ítem — no se duplica el resumen en ese caso.
+    if not hubo_origen_prohibido:
+        resultados.append(ok("GENERAL", "PAÍSES PROHIBIDOS", "Países prohibidos no encontrados"))
 
     return resultados
 
