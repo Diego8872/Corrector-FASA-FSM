@@ -163,11 +163,20 @@ if analizar:
         if bl_file:
             st.write("📋 Extrayendo Bill of Lading...")
             try:
-                datos_bl = extraer_bl(bl_file.read())
-                st.write(f"   ✅ BL: {datos_bl.get('bl_number')} | Fecha: {datos_bl.get('fecha_embarque')}")
+                bl_file.seek(0)
+                bl_bytes = bl_file.read()
+                st.write(f"   🔧 DEBUG: archivo leído, {len(bl_bytes)} bytes")
+                datos_bl = extraer_bl(bl_bytes)
+                st.write(f"   🔧 DEBUG datos_bl crudo: {datos_bl}")
+                if "error" in datos_bl:
+                    st.write(f"   ❌ {datos_bl['error']}")
+                else:
+                    st.write(f"   ✅ BL: {datos_bl.get('bl_number')} | Fecha: {datos_bl.get('fecha_embarque')}")
             except Exception as e:
                 datos_bl = {"error": str(e)}
                 st.write(f"   ❌ {e}")
+        else:
+            st.write("   ⚠️ DEBUG: bl_file es None — no se subió o no se detectó el archivo")
 
         # ── 7. API: DJ Origen ─────────────────────────────────────────────
         datos_dj = []
@@ -282,7 +291,8 @@ if analizar:
         docs_procesados["Certificados Mineros"] = {"ok": False, "detalle": "No se subieron CMs"}
 
     if datos_forwarding and "error" not in datos_forwarding:
-        docs_procesados["Forwarding Invoice"] = {"ok": True, "detalle": f"Flete: {datos_forwarding.get('flete_total')} | Seguro: {datos_forwarding.get('seguro_total')}"}
+        nombre_fwd = forwarding_file.name if forwarding_file else ""
+        docs_procesados["Forwarding Invoice"] = {"ok": True, "detalle": f"{nombre_fwd} | Flete: {datos_forwarding.get('flete_total')} | Seguro: {datos_forwarding.get('seguro_total')}"}
     else:
         docs_procesados["Forwarding Invoice"] = {"ok": False, "detalle": "No procesada"}
 
