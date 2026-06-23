@@ -629,9 +629,9 @@ def validar_bultos_vs_bl(df_bultos: pd.DataFrame, datos_bl: dict) -> list:
 
     es_contenedor = df_bultos["EMBALAJE"].str.upper().str.contains("CONTENEDOR", na=False)
 
-    cantidad_contenedores_di = df_bultos.loc[es_contenedor, "CANTIDAD"].apply(safe_float).sum()
-    cantidad_bultos_di       = df_bultos.loc[~es_contenedor, "CANTIDAD"].apply(safe_float).sum()
-    peso_bruto_di            = df_bultos["PESO BRUTO"].apply(safe_float).sum()
+    cantidad_contenedores_di = float(df_bultos.loc[es_contenedor, "CANTIDAD"].apply(safe_float).sum() or 0.0)
+    cantidad_bultos_di       = float(df_bultos.loc[~es_contenedor, "CANTIDAD"].apply(safe_float).sum() or 0.0)
+    peso_bruto_di            = float(df_bultos["PESO BRUTO"].apply(safe_float).sum() or 0.0)
 
     cantidad_contenedores_bl = safe_float(datos_bl.get("cantidad_contenedores", 0))
     cantidad_bultos_bl       = safe_float(datos_bl.get("cantidad_bultos", 0))
