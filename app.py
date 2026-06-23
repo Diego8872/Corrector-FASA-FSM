@@ -9,7 +9,7 @@ from utils.parser_di import leer_di, safe_float
 from utils.validaciones import validar_items, validar_subitems, validar_liquidacion, validar_prorrateo, validar_ncm_excel
 from utils.extractor_api import extraer_forwarding, extraer_bl, extraer_cm, extraer_dj_origen, extraer_numero_re_de_ce
 from utils.parser_factura_cat import extraer_factura_cat
-from utils.cruce_docs import validar_cm_vs_di, validar_factura_vs_di, validar_caratula_vs_docs, validar_caratula_totales, validar_dj_origen, validar_bultos_vs_bl
+from utils.cruce_docs import validar_cm_vs_di, validar_factura_vs_di, validar_caratula_vs_docs, validar_caratula_totales, validar_dj_origen, validar_bultos_vs_bl, validar_documentos_declarados
 from utils.reporte_pdf import generar_reporte_pdf
 
 st.set_page_config(page_title="Corrector FASA/FSM", page_icon="🔍", layout="wide")
@@ -269,6 +269,8 @@ if analizar:
             todos_resultados.extend(validar_dj_origen(df_items, df_subitems, datos_dj))
         if datos_bl and "error" not in datos_bl:
             todos_resultados.extend(validar_bultos_vs_bl(df_bultos, datos_bl))
+        if df_caratula is not None and (datos_facturas or datos_forwarding):
+            todos_resultados.extend(validar_documentos_declarados(df_caratula, datos_facturas, datos_forwarding))
 
         status.update(label="✅ Análisis completado", state="complete")
 
@@ -342,26 +344,28 @@ if "resultados" in st.session_state:
     docs_procesados = st.session_state.get("docs_procesados", {})
 
     # Revisión General: chequeos a nivel despacho completo (carátula, BL,
-    # bultos, países prohibidos, etc.), no por ítem. Se separan del resto
-    # para que el lector vea primero el panorama global y después el
-    # detalle ítem por ítem, sin que se mezclen ni se dupliquen.
-    resultados_generales = [r for r in todos_resultados if str(r.get("item", "")) == "GENERAL"]
-    resultados_items = [r for r in todos_resultados if str(r.get("item", "")) != "GENERAL"]
+    # bultos, países prohibidos, facturas/vendedor declarados, etc.), no
+    # por ítem. Los OK se muestran con su detalle real en la pestaña
+    # dedicada. Los ERROR/ALERTA de GENERAL, en cambio, viven en las
+    # pestañas normales de Errores/Alertas (junto con los de cada ítem) —
+    # en la pestaña Revisión General solo aparece un resumen por campo que
+    # redirige a la pestaña correspondiente, para no duplicar el detalle
+    # en dos lugares ni perder visibilidad.
+    es_general = lambda r: str(r.get("item", "")) == "GENERAL"
 
-    errores = [r for r in resultados_items if r["nivel"] == "ERROR"]
-    alertas_list = [r for r in resultados_items if r["nivel"] == "ALERTA"]
-    oks = [r for r in resultados_items if r["nivel"] == "OK"]
+    errores = [r for r in todos_resultados if r["nivel"] == "ERROR"]
+    alertas_list = [r for r in todos_resultados if r["nivel"] == "ALERTA"]
+    oks = [r for r in todos_resultados if r["nivel"] == "OK" and not es_general(r)]
+    oks_generales = [r for r in todos_resultados if r["nivel"] == "OK" and es_general(r)]
 
-    errores_generales = [r for r in resultados_generales if r["nivel"] == "ERROR"]
-    alertas_generales = [r for r in resultados_generales if r["nivel"] == "ALERTA"]
+    errores_generales = [r for r in errores if es_general(r)]
+    alertas_generales = [r for r in alertas_list if es_general(r)]
 
     st.subheader("📊 Resumen")
     c1, c2, c3 = st.columns(3)
     with c1: st.metric("❌ Errores", len(errores))
     with c2: st.metric("⚠️ Alertas", len(alertas_list))
-    with c3: st.metric("✅ OK", len(oks))
-    if errores_generales or alertas_generales:
-        st.warning(f"🌐 Revisión General: {len(errores_generales)} error(es) y {len(alertas_generales)} alerta(s) a nivel despacho — ver pestaña correspondiente.")
+    with c3: st.metric("✅ OK", len(oks) + len(oks_generales))
 
     st.subheader("📋 Detalle")
     tabs = st.tabs(["🌐 Revisión General", "❌ Errores", "⚠️ Alertas", "✅ OK", "📄 Todo"])
@@ -386,10 +390,36 @@ if "resultados" in st.session_state:
             },
         )
 
-    with tabs[0]: mostrar(resultados_generales)
+    def mostrar_revision_general():
+        # Los OK de GENERAL se muestran completos, con su mensaje real.
+        # Si hay ERROR/ALERTA de GENERAL, se agrega una fila resumen por
+        # campo afectado (no el detalle), señalando dónde ver el resto.
+        filas = list(oks_generales)
+        if errores_generales or alertas_generales:
+            campos_afectados = {}
+            for r in errores_generales + alertas_generales:
+                campos_afectados.setdefault(r["campo"], {"ERROR": 0, "ALERTA": 0})
+                campos_afectados[r["campo"]][r["nivel"]] += 1
+            for campo, cuenta in campos_afectados.items():
+                partes = []
+                if cuenta["ERROR"]:
+                    partes.append(f"{cuenta['ERROR']} error(es)")
+                if cuenta["ALERTA"]:
+                    partes.append(f"{cuenta['ALERTA']} alerta(s)")
+                pestana = "❌ Errores" if cuenta["ERROR"] else "⚠️ Alertas"
+                nivel_resumen = "ERROR" if cuenta["ERROR"] else "ALERTA"
+                filas.append({
+                    "item": "GENERAL",
+                    "campo": campo,
+                    "mensaje": f"Hay {' y '.join(partes)} — ver pestaña \"{pestana}\"",
+                    "nivel": nivel_resumen,
+                })
+        mostrar(filas)
+
+    with tabs[0]: mostrar_revision_general()
     with tabs[1]: mostrar(errores)
     with tabs[2]: mostrar(alertas_list)
-    with tabs[3]: mostrar(oks)
+    with tabs[3]: mostrar(oks + oks_generales)
     with tabs[4]: mostrar(todos_resultados)
 
 
