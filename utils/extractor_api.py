@@ -102,10 +102,15 @@ disponible, sea cual sea el rótulo exacto que use esa naviera:
   inferirse contando los números de contenedor individuales listados (formato tipo ABCD1234567)
   si no hay un total explícito. Si el BL no es de carga en contenedores (ej. carga suelta/break
   bulk), devolver 0.
-- cantidad_bultos: cantidad total de bultos/piezas/paquetes sueltos declarados. Puede figurar
-  como "No. of Packages", "PACKAGES", "PKGS", "Number of Packages", "Total Packages", o el
-  total de la columna de bultos en el cuadro de mercadería. Si la carga es solo en contenedores
-  cerrados sin desglose de bultos sueltos (FCL sin detalle interno), devolver 0.
+- cantidad_bultos: cantidad total de bultos/piezas/paquetes sueltos declarados COMO UNIDAD DE
+  TRANSPORTE INDEPENDIENTE (es decir, que no están dentro de un contenedor cerrado). Puede
+  figurar como "No. of Packages", "PACKAGES", "PKGS", "Number of Packages", "Total Packages".
+  OJO: en embarques FCL (contenedor completo, Movement = "FCL/FCL" o similar), suele aparecer
+  además un número de piezas/cajas DENTRO de la descripción de mercadería (ej. "61 PIECE",
+  "150 CARTONS") — eso es solo el detalle interno del contenido del contenedor, NO es un bulto
+  suelto independiente, y en ese caso cantidad_bultos debe ser 0. Usá cantidad_bultos > 0
+  únicamente cuando la carga viaja suelta, sin contenedor (carga general / break bulk / LCL con
+  piezas sueltas como unidad de transporte).
 - peso_bruto_kg: peso bruto TOTAL del embarque, en kilogramos. Puede figurar como
   "GROSS WEIGHT", "G.W.", "Gross Wt", "Weight", "Total Weight". Si el documento expresa el peso
   en otra unidad (ej. libras, toneladas), convertilo a kilogramos antes de devolverlo. Si hay
