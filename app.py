@@ -320,13 +320,14 @@ if analizar:
     # juntos, en vez de mezclados según el orden interno de cada cruce).
     def _clave_orden(r):
         item = str(r.get("item", ""))
-        # CARÁTULA y GENERAL van al final; los numéricos (zfill4) se ordenan
-        # como número. Ítems con múltiples números (ej. "0001, 0002") se
-        # ordenan por el primero.
+        # GENERAL va primero (panorama global del despacho: carátula,
+        # bultos/BL, países prohibidos, etc.); los ítems numéricos
+        # (zfill4) van después, ordenados como número. Ítems con múltiples
+        # números (ej. "0001, 0002") se ordenan por el primero.
         primero = item.split(",")[0].strip()
         if primero.isdigit():
-            return (0, int(primero))
-        return (1, primero)
+            return (1, int(primero))
+        return (0, primero)
 
     todos_resultados = sorted(todos_resultados, key=_clave_orden)
 
