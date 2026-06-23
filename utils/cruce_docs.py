@@ -131,14 +131,14 @@ def validar_cm_vs_di(df_items: pd.DataFrame, df_subitems: pd.DataFrame, datos_cm
                 cantidad_cm = safe_float(item_cm.get("cantidad", 0))
                 if cantidad_di > cantidad_cm:
                     resultados.append(alerta(item_num, "CANTIDAD",
-                        f"[CM: {numero_cm}] Código: {modelo_di} | Cantidad DI ({cantidad_di}) supera habilitado en CM ({cantidad_cm})",
+                        f"[CM: {numero_cm}] Cantidad DI ({cantidad_di}) supera habilitado en CM ({cantidad_cm})",
                         "ERROR"))
                 elif abs(cantidad_di - cantidad_cm) > 0.01:
                     resultados.append(alerta(item_num, "CANTIDAD",
-                        f"[CM: {numero_cm}] Código: {modelo_di} | Cantidad DI ({cantidad_di}) distinta a la habilitada en CM ({cantidad_cm}) — usa solo una parte del cupo, verificar si es intencional",
+                        f"[CM: {numero_cm}] Cantidad DI ({cantidad_di}) distinta a la habilitada en CM ({cantidad_cm}) — usa solo una parte del cupo, verificar si es intencional",
                         "ALERTA"))
                 else:
-                    resultados.append(ok(item_num, "CANTIDAD", f"Código: {modelo_di} | Cantidad OK: {cantidad_di} = {cantidad_cm}"))
+                    resultados.append(ok(item_num, "CANTIDAD", f"Cantidad OK: {cantidad_di} = {cantidad_cm}"))
 
                 fob_cm = safe_float(item_cm.get("valor_total_fob", 0))
                 if abs(fob_di - fob_cm) > TOLERANCIA_FOB:
