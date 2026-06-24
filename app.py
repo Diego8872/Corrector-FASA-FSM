@@ -15,19 +15,27 @@ from utils.reporte_pdf import generar_reporte_pdf
 st.set_page_config(page_title="Corrector FASA/FSM", page_icon="🔍", layout="wide")
 
 # ─── RESETEO (botón "Nuevo análisis") ─────────────────────────────────────────
-# Debe correr ANTES de instanciar los uploaders/widgets, ya que en Streamlit
-# no se puede vaciar un file_uploader después de creado — solo borrando su
-# key de session_state antes de que el script vuelva a renderizarlo. El
-# caché de CMs (cache_cm) se mantiene a propósito, para no perder llamadas
-# a la API ya hechas si se vuelve a analizar un CM repetido.
+# Streamlit no vacía un file_uploader solo borrando su key de session_state
+# si el archivo ya quedó cargado en el navegador — hace falta que la key
+# del widget cambie para que lo trate como un widget nuevo. Por eso se usa
+# un contador de versión ("uploader_version"): al resetear, se incrementa,
+# y todas las keys de los uploaders (definidas como f"di_{version}", etc.)
+# cambian, forzando que vuelvan a aparecer vacíos.
+# El caché de CMs (cache_cm) se mantiene a propósito, para no perder
+# llamadas a la API ya hechas si se vuelve a analizar un CM repetido.
+if "uploader_version" not in st.session_state:
+    st.session_state["uploader_version"] = 0
+
 if st.session_state.get("_resetear", False):
+    st.session_state["uploader_version"] += 1
     claves_a_borrar = [
-        "di", "facturas", "forwarding", "bl", "ncm", "dj_origen", "cms",
         "resultados", "config", "docs_procesados", "referencia", "numero_di",
-        "referencia_input", "_resetear",
+        "_resetear",
     ]
     for k in claves_a_borrar:
         st.session_state.pop(k, None)
+
+UV = st.session_state["uploader_version"]  # sufijo de key para los uploaders
 
 st.markdown("""
 <style>
@@ -62,29 +70,29 @@ config = {"empresa": empresa, "cuit_ie": cuit_ie, "regimen": regimen, "aduana": 
 # ─── REFERENCIA ──────────────────────────────────────────────────────────────
 referencia = st.text_input("📌 Referencia de la operación a analizar",
     placeholder="Ej: FSM-2026-0612", help="Se usa para nombrar los archivos de salida (PDF / Excel).",
-    key="referencia_input")
+    key=f"referencia_input_{UV}")
 
 # ─── DOCUMENTOS ──────────────────────────────────────────────────────────────
 st.subheader("📁 Carga de documentos")
 
 col1, col2 = st.columns(2)
 with col1:
-    di_file = st.file_uploader("📊 Excel del DI (Provisorio)", type=["xlsx", "xls"], key="di")
-    facturas = st.file_uploader("🧾 Facturas comerciales (PDF)", type=["pdf"], accept_multiple_files=True, key="facturas")
-    forwarding_file = st.file_uploader("🚢 Forwarding Invoice (PDF)", type=["pdf"], key="forwarding")
+    di_file = st.file_uploader("📊 Excel del DI (Provisorio)", type=["xlsx", "xls"], key=f"di_{UV}")
+    facturas = st.file_uploader("🧾 Facturas comerciales (PDF)", type=["pdf"], accept_multiple_files=True, key=f"facturas_{UV}")
+    forwarding_file = st.file_uploader("🚢 Forwarding Invoice (PDF)", type=["pdf"], key=f"forwarding_{UV}")
 
 with col2:
-    bl_file = st.file_uploader("📋 Bill of Lading (PDF)", type=["pdf"], key="bl")
-    ncm_file = st.file_uploader("📑 Excel de clasificación NCM", type=["xlsx", "xls"], key="ncm")
+    bl_file = st.file_uploader("📋 Bill of Lading (PDF)", type=["pdf"], key=f"bl_{UV}")
+    ncm_file = st.file_uploader("📑 Excel de clasificación NCM", type=["xlsx", "xls"], key=f"ncm_{UV}")
     dj_origen_files = st.file_uploader("📄 DJ Origen No Preferencial (PDF)",
-        type=["pdf"], accept_multiple_files=True, key="dj_origen")
+        type=["pdf"], accept_multiple_files=True, key=f"dj_origen_{UV}")
 
 # ─── CERTIFICADOS MINEROS ─────────────────────────────────────────────────────
 st.subheader("📜 Certificados Mineros (CM)")
 st.info("Subí todos los CE y RE juntos. La app los empareja automáticamente.", icon="ℹ️")
 
 cm_files = st.file_uploader("Archivos CM (CE y RE en PDF)",
-    type=["pdf"], accept_multiple_files=True, key="cms")
+    type=["pdf"], accept_multiple_files=True, key=f"cms_{UV}")
 
 ce_files = {}
 re_files = {}
