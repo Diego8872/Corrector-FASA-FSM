@@ -266,6 +266,17 @@ def generar_reporte_pdf(todos_resultados: list, config: dict, numero_di: str = "
         for r in errores_generales + alertas_generales:
             campos_afectados.setdefault(r["campo"], {"ERROR": 0, "ALERTA": 0})
             campos_afectados[r["campo"]][r["nivel"]] += 1
+
+        # El campo GENERAL "FOB" (total del despacho) está relacionado
+        # con las validaciones por ítem de MONTO FOB (FACTURA) y
+        # MONTO FOB (CM) — si hay error en el total, el resumen general
+        # también refleja cuántos ítems puntuales tienen diferencia.
+        if "FOB" in campos_afectados:
+            campos_fob_item = {"MONTO FOB (FACTURA)", "MONTO FOB (CM)"}
+            for r in errores + alertas:
+                if r["campo"] in campos_fob_item:
+                    campos_afectados["FOB"][r["nivel"]] += 1
+
         for campo, cuenta in campos_afectados.items():
             partes = []
             if cuenta["ERROR"]:
