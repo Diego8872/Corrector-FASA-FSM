@@ -23,7 +23,7 @@ MORADO      = colors.HexColor("#5B3FA0")
 BLANCO      = colors.white
 
 
-def generar_reporte_pdf(todos_resultados: list, config: dict, numero_di: str = "", docs_procesados: dict = None) -> bytes:
+def generar_reporte_pdf(todos_resultados: list, config: dict, numero_di: str = "", docs_procesados: dict = None, incluir_detalle_ok: bool = False) -> bytes:
     buffer = io.BytesIO()
 
     doc = SimpleDocTemplate(
@@ -314,9 +314,21 @@ def generar_reporte_pdf(todos_resultados: list, config: dict, numero_di: str = "
         story.append(Spacer(1, 10))
 
     # ─── OK ───────────────────────────────────────────────────────────────────
+    # Por defecto no se incluye el detalle fila por fila de cada ítem OK
+    # (puede ser miles de filas en despachos grandes) — el panorama
+    # agrupado ya está en Revisión General. Solo se incluye el detalle
+    # completo si el usuario lo pidió explícitamente (incluir_detalle_ok).
     if oks:
         story.append(Paragraph("✅ Validaciones correctas", estilo_seccion))
-        tabla_detalle(oks, colors.HexColor("#F1F8E9"), VERDE)
+        if incluir_detalle_ok:
+            tabla_detalle(oks, colors.HexColor("#F1F8E9"), VERDE)
+        else:
+            story.append(Paragraph(
+                f"{len(oks)} validación(es) por ítem superadas correctamente. "
+                f"El detalle agrupado ya está en la sección 'Revisión General'. "
+                f"Para ver el detalle completo fila por fila, generar el PDF con la opción "
+                f"\"Incluir detalle completo de Validaciones correctas\" activada.",
+                estilo_normal))
 
     # ─── PIE DE PÁGINA ────────────────────────────────────────────────────────
     def pie_pagina(canvas, doc):
