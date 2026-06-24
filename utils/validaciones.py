@@ -135,6 +135,7 @@ def validar_items(df_items: pd.DataFrame, df_subitems: pd.DataFrame = None, df_c
     hubo_origen_prohibido = False
     items_con_ajuste = 0
     total_items = 0
+    items_con_ajuste_lista = []
 
     for _, row in df_items.iterrows():
         item = str(row.get("ITEM", "?")).strip().zfill(4)
@@ -205,6 +206,7 @@ def validar_items(df_items: pd.DataFrame, df_subitems: pd.DataFrame = None, df_c
         ajuste_deducir = safe_float(row.get("AJUSTE A DEDUCIR", 0))
         if ajuste_incluir or ajuste_deducir:
             items_con_ajuste += 1
+            items_con_ajuste_lista.append(item)
             partes_ajuste = []
             if ajuste_incluir:
                 partes_ajuste.append(f"Ajuste a Incluir: {ajuste_incluir:.2f}")
@@ -226,9 +228,10 @@ def validar_items(df_items: pd.DataFrame, df_subitems: pd.DataFrame = None, df_c
     # exclusivamente en Revisión General; el detalle real (por ítem) ya
     # quedó arriba como ALERTA, así que esta fila no se duplica ahí.
     if items_con_ajuste:
+        items_str = ", ".join(items_con_ajuste_lista)
         resultados.append({
             "item": "GENERAL", "campo": "AJUSTES",
-            "mensaje": f"De {total_items} ítems, {items_con_ajuste} con valor en Ajuste a Incluir/Deducir — ver pestaña Alertas",
+            "mensaje": f"De {total_items} ítems, {items_con_ajuste} con valor en Ajuste a Incluir/Deducir: {items_str} — ver pestaña Alertas",
             "nivel": "ALERTA", "es_resumen": True,
         })
     else:
@@ -512,12 +515,14 @@ def validar_resumen_liquidacion(resultados_liquidacion: list, total_items: int) 
         motivos_totales.update(info["motivos"])
     motivos_str = ", ".join(sorted(motivos_totales))
 
+    items_str = ", ".join(sorted(items_con_problema.keys()))
+
     nivel_general = "ERROR" if any(i["nivel"] == "ERROR" for i in items_con_problema.values()) else "ALERTA"
     pestana = "Errores" if nivel_general == "ERROR" else "Alertas"
 
     mensaje = (
         f"De {total_items} ítems, {cant_ok} sin observaciones en liquidación — "
-        f"{cant_con_problema} ítem(s) con diferencia en {motivos_str} — ver pestaña {pestana}"
+        f"{cant_con_problema} ítem(s) con diferencia en {motivos_str}: {items_str} — ver pestaña {pestana}"
     )
 
     return [{
