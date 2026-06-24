@@ -474,6 +474,7 @@ if "resultados" in st.session_state:
     with col_xlsx:
         df_export = pd.DataFrame(todos_resultados)
         if not df_export.empty:
+            df_export = df_export[["item", "campo", "mensaje", "nivel"]]
             df_export.columns = ["Ítem", "Campo", "Mensaje", "Nivel"]
             output = io.BytesIO()
             with pd.ExcelWriter(output, engine="openpyxl") as writer:
