@@ -472,14 +472,25 @@ if "resultados" in st.session_state:
             return (1, int(primero))
         return (0, primero)
 
+    # Campos informativos/declarativos de baja prioridad de lectura: van
+    # siempre al final de la pestaña, después del resto de los campos
+    # (que mantienen orden alfabético entre sí), ya que no es tan
+    # relevante revisarlos ítem por ítem como Liquidación, FOB, etc.
+    CAMPOS_BAJA_PRIORIDAD = {"I:DNRT-EXC-OPC", "I:AUTOPARTESEG-OPC", "I:DNRT-OPC"}
+
+    def _clave_campo(campo: str):
+        campo = str(campo)
+        return (1, campo) if campo in CAMPOS_BAJA_PRIORIDAD else (0, campo)
+
     def mostrar_por_campo(lista):
         # Para Errores/Alertas: agrupa primero por Campo (para encontrar
         # rápido todas las observaciones de un mismo tipo, ej. todas las
         # de LIQUIDACIÓN juntas) y, dentro de cada campo, ordena por Ítem.
+        # Los campos informativos de baja prioridad quedan al final.
         if not lista:
             st.info("Sin resultados.")
             return
-        lista_ordenada = sorted(lista, key=lambda r: (str(r.get("campo", "")), _clave_item(r)))
+        lista_ordenada = sorted(lista, key=lambda r: (_clave_campo(r.get("campo", "")), _clave_item(r)))
         mostrar(lista_ordenada)
 
     def mostrar_revision_general():
