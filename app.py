@@ -38,6 +38,10 @@ with st.sidebar:
 
 config = {"empresa": empresa, "cuit_ie": cuit_ie, "regimen": regimen, "aduana": aduana}
 
+# ─── REFERENCIA ──────────────────────────────────────────────────────────────
+referencia = st.text_input("📌 Referencia de la operación a analizar",
+    placeholder="Ej: FSM-2026-0612", help="Se usa para nombrar los archivos de salida (PDF / Excel).")
+
 # ─── DOCUMENTOS ──────────────────────────────────────────────────────────────
 st.subheader("📁 Carga de documentos")
 
@@ -88,6 +92,13 @@ if analizar:
     def _num(s):
         m = pat_num.search(s.upper())
         return m.group(0) if m else s
+
+    # Número de DI: se extrae del nombre del archivo Excel subido (ej.
+    # "26001IC04605782@.xlsx" -> "26001IC04605782@"), quitando solo la
+    # extensión. Es solo informativo para mostrar en el PDF — el nombre
+    # del archivo de salida usa la "Referencia" indicada por el usuario,
+    # no este número.
+    numero_di = _re.sub(r"\.(xlsx|xls)$", "", di_file.name, flags=_re.IGNORECASE)
 
     with st.status("Analizando despacho...", expanded=True) as status:
 
@@ -353,6 +364,8 @@ if analizar:
     st.session_state["resultados"] = todos_resultados
     st.session_state["config"] = config
     st.session_state["docs_procesados"] = docs_procesados
+    st.session_state["referencia"] = referencia
+    st.session_state["numero_di"] = numero_di
 
 # ─── MOSTRAR RESULTADOS (persisten tras descarga) ─────────────────────────────
 if "resultados" in st.session_state:
@@ -478,12 +491,19 @@ if "resultados" in st.session_state:
     st.subheader("📥 Exportar reporte")
     col_pdf, col_xlsx = st.columns(2)
 
+    referencia_actual = st.session_state.get("referencia", "").strip()
+    numero_di_actual = st.session_state.get("numero_di", "")
+    # Sufijo del nombre de archivo: la Referencia indicada por el usuario,
+    # tal cual la escribió (sin limpiar caracteres). Si no se indicó
+    # ninguna, el archivo queda con el nombre genérico de siempre.
+    sufijo_archivo = f"_{referencia_actual}" if referencia_actual else ""
+
     with col_pdf:
         try:
-            pdf_bytes = generar_reporte_pdf(todos_resultados, config_actual, docs_procesados=docs_procesados)
+            pdf_bytes = generar_reporte_pdf(todos_resultados, config_actual, numero_di=numero_di_actual, docs_procesados=docs_procesados)
             st.download_button("📄 Descargar reporte PDF",
                 data=pdf_bytes,
-                file_name="reporte_corrector_FSM.pdf",
+                file_name=f"reporte_corrector_FSM{sufijo_archivo}.pdf",
                 mime="application/pdf",
                 use_container_width=True,
                 type="primary")
@@ -502,6 +522,6 @@ if "resultados" in st.session_state:
                 df_export[df_export["Nivel"] == "ALERTA"].to_excel(writer, index=False, sheet_name="Alertas")
             st.download_button("📊 Descargar Excel",
                 data=output.getvalue(),
-                file_name="reporte_corrector_FSM.xlsx",
+                file_name=f"reporte_corrector_FSM{sufijo_archivo}.xlsx",
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                 use_container_width=True)
