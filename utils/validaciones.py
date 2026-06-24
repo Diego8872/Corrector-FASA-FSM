@@ -361,7 +361,7 @@ def validar_liquidacion(df_liq: pd.DataFrame, df_items: pd.DataFrame, df_subitem
                         resultados.append(alerta(item, "LIQUIDACIÓN", f"'{nombre}': porcentaje {pct_real}% — se esperaba {pct_esperado}%{suf}", "ERROR"))
                     base_esperada = base_032 + importe_032
 
-                if abs(match["base"] - base_esperada) > TOLERANCIA_FOB:
+                if round(match["base"], 2) != round(base_esperada, 2):
                     resultados.append(alerta(item, "LIQUIDACIÓN", f"'{nombre}': base imponible {match['base']:.2f} — esperada {base_esperada:.2f}{suf}"))
 
             for c in conceptos_item:
@@ -420,9 +420,9 @@ def validar_prorrateo(df_items: pd.DataFrame, fob_total: float, flete_total: flo
         proporcion = fob_item / fob_total if fob_total else 0
         flete_esperado = round(flete_total * proporcion, 5)
         seguro_esperado = round(seguro_total * proporcion, 5)
-        if abs(flete_item - flete_esperado) > TOLERANCIA_FOB:
+        if round(flete_item, 5) != flete_esperado:
             resultados.append(alerta(item, "FLETE EN DIV", f"Declarado {flete_item:.5f} — esperado {flete_esperado:.5f}{suf}"))
-        if abs(seguro_item - seguro_esperado) > TOLERANCIA_FOB:
+        if round(seguro_item, 5) != seguro_esperado:
             resultados.append(alerta(item, "SEGURO EN DIV", f"Declarado {seguro_item:.5f} — esperado {seguro_esperado:.5f}{suf}"))
     return resultados
 
