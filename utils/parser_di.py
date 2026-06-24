@@ -69,20 +69,21 @@ def normalizar_codigo(codigo: str) -> str:
     Normaliza código de parte para comparación:
       1. Quita guiones y espacios
       2. Convierte a mayúsculas
-      3. Quita ceros de relleno a la izquierda (el DI puede declarar el
-         código con ceros adelante por formato de ancho fijo, ej.
-         "02593142" en vez de "2593142" — no son parte del código real,
-         tanto en códigos numéricos como alfanuméricos)
-      4. Aplica regla estructural CAT (misma que el parser de factura):
+      3. Aplica regla estructural CAT (misma que el parser de factura):
          - Empieza con 3 dígitos → tomar primeros 7 chars
          - Tiene letra inicial   → tomar primeros 6 chars
     Esto elimina cualquier sufijo de origen (J, VN, CO, (, ), etc.)
     sin necesidad de conocerlos de antemano.
+
+    IMPORTANTE: no se sacan ceros iniciales. Un cero al principio puede
+    ser parte real del código de catálogo (ej. "0S-0509L" -> "0S0509",
+    donde el 0 es el primer carácter del código, no relleno). Si el DI
+    declara un código que el cliente sabe que tiene ceros de relleno
+    distintos a los de la factura, ese es un caso de declaración
+    incorrecta a resolver manualmente, no algo que la normalización deba
+    adivinar.
     """
     s = re.sub(r'[-\s]', '', codigo.strip().upper())
-    if not s:
-        return s
-    s = s.lstrip('0')
     if not s:
         return s
     if re.match(r'^\d{3}', s):
