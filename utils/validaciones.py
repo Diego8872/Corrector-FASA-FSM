@@ -34,12 +34,22 @@ def _ref(modelo: str = "", factura: str = "", cm: str = "") -> str:
     return (" | " + " | ".join(partes)) if partes else ""
 
 
-def _facturas_que_contienen_codigo(modelo: str, datos_facturas: dict) -> str:
+def _facturas_que_contienen_codigo(modelo: str, datos_facturas: dict) -> str | None:
     """
     Busca el código de parte (normalizado) en cada factura ya parseada y
     retorna los nombres de las facturas que efectivamente lo contienen.
     Evita listar todas las facturas del despacho cuando no hay CM que
     indique la factura exacta.
+
+    Retorna:
+      - "" (string vacío) si no se pudo intentar la búsqueda (sin modelo
+        o sin datos_facturas disponibles) — el caller puede caer a otro
+        fallback en este caso.
+      - None si SÍ se buscó activamente pero el código no se encontró en
+        ninguna factura — señal explícita de que no hay que caer al
+        fallback de listar todas las facturas, porque ya se confirmó que
+        ninguna lo tiene (sería información falsa).
+      - El nombre de la(s) factura(s) encontrada(s), si hubo match.
     """
     if not modelo or not datos_facturas:
         return ""
@@ -52,6 +62,8 @@ def _facturas_que_contienen_codigo(modelo: str, datos_facturas: dict) -> str:
         if any(normalizar_codigo(i.get("codigo_parte", "")) == modelo_norm for i in items_factura):
             nombre_limpio = re.sub(r"\.pdf$", "", nro_factura, flags=re.IGNORECASE)
             encontradas.append(nombre_limpio)
+    if not encontradas:
+        return None
     return ", ".join(encontradas)
 
 
@@ -110,6 +122,7 @@ def _build_ref_map(df_items: pd.DataFrame, df_subitems: pd.DataFrame, df_caratul
         cm = info["cm"]
         modelo = info["modelo"]
         factura = ""
+        busqueda_sin_resultado = False  # True si se buscó activamente y no se encontró nada
 
         # 1. Vía CM: usar la factura declarada en el propio CM
         if cm and cm in datos_cm and "error" not in datos_cm[cm]:
@@ -117,11 +130,23 @@ def _build_ref_map(df_items: pd.DataFrame, df_subitems: pd.DataFrame, df_caratul
 
         # 2. Vía búsqueda real en facturas parseadas
         if not factura and modelo and datos_facturas:
-            factura = _facturas_que_contienen_codigo(modelo, datos_facturas)
+            resultado_busqueda = _facturas_que_contienen_codigo(modelo, datos_facturas)
+            if resultado_busqueda is None:
+                # Se buscó el código en todas las facturas y no apareció
+                # en ninguna — no caer al fallback de listar todas, sería
+                # información falsa (ya se confirmó que ninguna lo tiene).
+                busqueda_sin_resultado = True
+            else:
+                factura = resultado_busqueda
 
-        # 3. Fallback legado: campo directo del DI o lista completa de carátula
-        if not factura:
+        # 3. Fallback legado: campo directo del DI o lista completa de
+        #    carátula. No se aplica si ya se confirmó la ausencia del
+        #    código en las facturas (busqueda_sin_resultado).
+        if not factura and not busqueda_sin_resultado:
             factura = facturas_caratula and ", ".join(facturas_caratula) or ""
+
+        if not factura and busqueda_sin_resultado:
+            factura = "no determinada"
 
         info["factura"] = factura
 
