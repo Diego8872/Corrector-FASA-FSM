@@ -328,7 +328,7 @@ if analizar:
         # Alertas/OK, donde vive el detalle real de cada cruce.
         todos_resultados.extend(validar_resumen_cm(df_items, datos_cm, resultados_cm_vs_di))
         todos_resultados.extend(validar_resumen_dj_origen(df_items, datos_dj, resultados_dj_origen))
-        todos_resultados.extend(validar_resumen_items(resultados_cm_vs_di, resultados_factura_vs_di))
+        todos_resultados.extend(validar_resumen_items(resultados_cm_vs_di, resultados_factura_vs_di, len(df_items)))
 
         status.update(label="✅ Análisis completado", state="complete")
 
@@ -494,6 +494,18 @@ if "resultados" in st.session_state:
             for r in errores_generales + alertas_generales:
                 campos_afectados.setdefault(r["campo"], {"ERROR": 0, "ALERTA": 0})
                 campos_afectados[r["campo"]][r["nivel"]] += 1
+
+            # El campo GENERAL "FOB" (total del despacho) está relacionado
+            # con las validaciones por ítem de MONTO FOB (FACTURA) y
+            # MONTO FOB (CM) — si hay error en el total, conviene que el
+            # resumen general también refleje cuántos ítems puntuales
+            # tienen diferencia, para dar el panorama completo de una vez.
+            if "FOB" in campos_afectados:
+                campos_fob_item = {"MONTO FOB (FACTURA)", "MONTO FOB (CM)"}
+                for r in errores + alertas_list:
+                    if r["campo"] in campos_fob_item:
+                        campos_afectados["FOB"][r["nivel"]] += 1
+
             for campo, cuenta in campos_afectados.items():
                 partes = []
                 if cuenta["ERROR"]:
