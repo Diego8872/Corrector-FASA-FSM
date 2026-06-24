@@ -286,23 +286,37 @@ def generar_reporte_pdf(todos_resultados: list, config: dict, numero_di: str = "
         tabla_detalle(filas_revision_general, colors.HexColor("#EEE8F7"), MORADO)
         story.append(Spacer(1, 10))
 
+    def _clave_item(r):
+        # Mismo criterio usado en toda la app: GENERAL al principio,
+        # ítems numéricos ordenados como número.
+        item = str(r.get("item", ""))
+        primero = item.split(",")[0].strip()
+        if primero.isdigit():
+            return (1, int(primero))
+        return (0, primero)
+
     # ─── ERRORES ──────────────────────────────────────────────────────────────
+    # Ordenado por Campo y luego por Ítem (no solo por Ítem) para que las
+    # observaciones de un mismo tipo (ej. todas las de LIQUIDACIÓN) queden
+    # agrupadas y sean fáciles de ubicar sin tener que revisar fila por
+    # fila entre cientos de ítems.
     if errores:
         story.append(Paragraph("❌ Errores — Corrección obligatoria", estilo_seccion))
-        tabla_detalle(errores, colors.HexColor("#FDECEA"), ROJO)
+        errores_ordenados = sorted(errores, key=lambda r: (str(r.get("campo", "")), _clave_item(r)))
+        tabla_detalle(errores_ordenados, colors.HexColor("#FDECEA"), ROJO)
         story.append(Spacer(1, 10))
 
     # ─── ALERTAS ──────────────────────────────────────────────────────────────
     if alertas:
         story.append(Paragraph("⚠️ Alertas — Verificar antes de oficializar", estilo_seccion))
-        tabla_detalle(alertas, colors.HexColor("#FFF8E1"), NARANJA)
+        alertas_ordenadas = sorted(alertas, key=lambda r: (str(r.get("campo", "")), _clave_item(r)))
+        tabla_detalle(alertas_ordenadas, colors.HexColor("#FFF8E1"), NARANJA)
         story.append(Spacer(1, 10))
 
     # ─── OK ───────────────────────────────────────────────────────────────────
-    todos_oks = oks + oks_generales
-    if todos_oks:
+    if oks:
         story.append(Paragraph("✅ Validaciones correctas", estilo_seccion))
-        tabla_detalle(todos_oks, colors.HexColor("#F1F8E9"), VERDE)
+        tabla_detalle(oks, colors.HexColor("#F1F8E9"), VERDE)
 
     # ─── PIE DE PÁGINA ────────────────────────────────────────────────────────
     def pie_pagina(canvas, doc):
