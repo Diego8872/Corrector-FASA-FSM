@@ -767,6 +767,22 @@ def validar_documentos_declarados(df_caratula: "pd.DataFrame", datos_facturas: d
                 f"Todas las facturas declaradas en el DI ({len(facturas_declaradas)}) fueron subidas: "
                 f"{', '.join(facturas_declaradas)}"))
 
+    # ── Forwarding Invoice: número declarado (mismo campo FACTURAS) vs subido ──
+    if facturas_declaradas and datos_forwarding and "error" not in datos_forwarding:
+        CAMPO_FWD = "FORWARDING"
+        nro_fwd = str(datos_forwarding.get("numero_invoice", "")).strip().upper()
+        declarado_fwd = next(
+            (f for f in facturas_declaradas if nro_fwd and f.strip().upper() == nro_fwd),
+            None
+        )
+        if nro_fwd and declarado_fwd:
+            resultados.append(ok_(CAMPO_FWD,
+                f"Invoice declarada en el DI coincide con la subida: {nro_fwd}"))
+        elif nro_fwd:
+            resultados.append(al(CAMPO_FWD,
+                f"Invoice subida ({nro_fwd}) no figura entre las facturas declaradas en el DI: "
+                f"{', '.join(facturas_declaradas)}"))
+
     # ── Vendedor declarado vs vendedor de cada factura ──
     if vendedor_declarado and datos_facturas:
         vendedor_norm = _normalizar_nombre(vendedor_declarado)
@@ -787,5 +803,160 @@ def validar_documentos_declarados(df_caratula: "pd.DataFrame", datos_facturas: d
         else:
             resultados.append(ok_(CAMPO_VEND,
                 f"Vendedor verificado en todas las facturas: {vendedor_declarado}"))
+
+    return resultados
+
+
+# ── Resumen General: Certificados Mineros ─────────────────────────────────────
+
+def validar_resumen_cm(df_items: pd.DataFrame, datos_cm: dict, resultados_cm_vs_di: list) -> list:
+    """
+    Resumen a nivel despacho de los Certificados Mineros: para cada CM
+    declarado en el DI (columna D:CERTSM de cada ítem), confirma que fue
+    subido y que el detalle (NCM, código, cantidad, FOB) coincide.
+
+    3 estados posibles por CM:
+      1. Declarado, subido, y todo el detalle OK -> OK
+      2. Declarado pero no subido / no encontrado -> ERROR
+      3. Declarado y subido, pero hay diferencias en el detalle -> ERROR/ALERTA
+         según el nivel más alto encontrado entre sus ítems.
+
+    `resultados_cm_vs_di` es la lista ya generada por validar_cm_vs_di()
+    para los mismos datos — se reutiliza para no recalcular el cruce.
+    """
+    resultados = []
+    CAMPO = "CERTIFICADOS MINEROS"
+
+    def al(msg, nivel="ERROR"):
+        return {"item": "GENERAL", "campo": CAMPO, "mensaje": msg, "nivel": nivel}
+    def ok_(msg):
+        return {"item": "GENERAL", "campo": CAMPO, "mensaje": msg, "nivel": "OK"}
+
+    if df_items is None or df_items.empty:
+        return resultados
+
+    cms_declarados = set()
+    for _, row in df_items.iterrows():
+        cm = str(row.get("D:CERTSM", "")).strip()
+        if cm:
+            cms_declarados.add(cm)
+
+    if not cms_declarados:
+        return resultados
+
+    datos_cm = datos_cm or {}
+
+    # Niveles encontrados en el detalle (NCM/MODELO/CANTIDAD/MONTO FOB) por
+    # CM. El número de CM se infiere del propio mensaje, que siempre
+    # empieza con "[CM: <numero>] ..." en validar_cm_vs_di.
+    campos_detalle_cm = {"NCM", "MODELO", "CANTIDAD", "MONTO FOB"}
+    nivel_por_cm = {}  # numero_cm -> "ERROR" | "ALERTA" (el más alto encontrado)
+    for r in resultados_cm_vs_di or []:
+        if r.get("campo") not in campos_detalle_cm or r.get("nivel") == "OK":
+            continue
+        m = re.search(r"\[CM:\s*([^\]]+)\]", str(r.get("mensaje", "")))
+        if not m:
+            continue
+        numero_cm = m.group(1).strip()
+        nivel = r.get("nivel")
+        if nivel_por_cm.get(numero_cm) != "ERROR":
+            nivel_por_cm[numero_cm] = nivel if nivel == "ERROR" else (nivel_por_cm.get(numero_cm) or nivel)
+
+    for numero_cm in sorted(cms_declarados):
+        cm_data = datos_cm.get(numero_cm)
+
+        if not cm_data or "error" in cm_data:
+            resultados.append(al(
+                f"CM {numero_cm}: declarado en el despacho pero no se encontró su PDF subido / no se pudo procesar"))
+            continue
+
+        nivel_detalle = nivel_por_cm.get(numero_cm)
+        if nivel_detalle:
+            resultados.append(al(
+                f"CM {numero_cm}: número OK, pero hay diferencias en el contenido — ver pestaña Errores/Alertas",
+                nivel_detalle))
+        else:
+            resultados.append(ok_(
+                f"CM {numero_cm}: número y contenido (NCM, código, cantidad, FOB) verificados OK"))
+
+    return resultados
+
+
+# ── Resumen General: DJ de Origen No Preferencial ─────────────────────────────
+
+def validar_resumen_dj_origen(df_items: pd.DataFrame, datos_dj: list, resultados_dj_origen: list) -> list:
+    """
+    Resumen a nivel despacho de las DJ de Origen No Preferencial: para cada
+    DJ declarada en el DI (campo D:DJ-ORIG-NOPREFER de cada ítem — puede
+    haber más de una en el despacho), confirma que fue subida y que el
+    detalle (NCM, cantidad, país, unidad, CIF) coincide.
+
+    3 estados posibles por DJ:
+      1. Declarada, subida, y todo el detalle OK -> OK
+      2. Declarada pero no subida / no encontrada -> ERROR
+      3. Declarada y subida, pero hay diferencias en el detalle -> ERROR/ALERTA
+
+    `resultados_dj_origen` es la lista ya generada por validar_dj_origen()
+    para los mismos datos — se reutiliza para no recalcular el cruce.
+    """
+    resultados = []
+    CAMPO = "DJ ORIGEN"
+
+    def al(msg, nivel="ERROR"):
+        return {"item": "GENERAL", "campo": CAMPO, "mensaje": msg, "nivel": nivel}
+    def ok_(msg):
+        return {"item": "GENERAL", "campo": CAMPO, "mensaje": msg, "nivel": "OK"}
+
+    if df_items is None or df_items.empty:
+        return resultados
+
+    djs_declaradas = set()
+    for _, row in df_items.iterrows():
+        dj = str(row.get("D:DJ-ORIG-NOPREFER", "")).strip()
+        if dj:
+            djs_declaradas.add(dj)
+
+    if not djs_declaradas:
+        return resultados
+
+    ifs_subidos = {
+        str(d.get("numero_if", "")).strip().upper()
+        for d in (datos_dj or []) if "error" not in d and d.get("numero_if")
+    }
+
+    # Nivel más alto encontrado en el detalle (campos que empiezan con "DJ ")
+    # de validar_dj_origen, sin contar el chequeo de D:DJ-ORIG-NOPREFER en sí
+    # (ese es justamente el de "declarada vs subida" que ya resolvemos aquí).
+    hay_error_detalle = any(
+        r.get("nivel") == "ERROR" and str(r.get("campo", "")).startswith("DJ ")
+        for r in (resultados_dj_origen or [])
+    )
+    hay_alerta_detalle = any(
+        r.get("nivel") == "ALERTA" and str(r.get("campo", "")).startswith("DJ ")
+        for r in (resultados_dj_origen or [])
+    )
+
+    for dj_declarada in sorted(djs_declaradas):
+        coincide = any(
+            dj_declarada.upper() in if_sub or if_sub in dj_declarada.upper()
+            for if_sub in ifs_subidos
+        )
+
+        if not ifs_subidos or not coincide:
+            resultados.append(al(
+                f"DJ {dj_declarada}: declarada en el despacho pero no se encontró su PDF subido"))
+            continue
+
+        if hay_error_detalle:
+            resultados.append(al(
+                f"DJ {dj_declarada}: número OK, pero hay diferencias en el contenido — ver pestaña Errores/Alertas",
+                "ERROR"))
+        elif hay_alerta_detalle:
+            resultados.append(al(
+                f"DJ {dj_declarada}: número OK, pero hay diferencias en el contenido — ver pestaña Errores/Alertas",
+                "ALERTA"))
+        else:
+            resultados.append(ok_(
+                f"DJ {dj_declarada}: número y contenido (NCM, cantidad, país, CIF) verificados OK"))
 
     return resultados
