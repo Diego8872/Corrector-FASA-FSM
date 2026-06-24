@@ -309,7 +309,7 @@ if analizar:
         if datos_facturas:
             resultados_factura_vs_di = validar_factura_vs_di(df_items, df_subitems, datos_facturas, df_ncm)
             todos_resultados.extend(resultados_factura_vs_di)
-            todos_resultados.extend(validar_caratula_totales(caratula, datos_facturas, datos_forwarding))
+            todos_resultados.extend(validar_caratula_totales(caratula, datos_facturas, datos_forwarding, resultados_factura_vs_di))
         if datos_forwarding or datos_bl:
             todos_resultados.extend(validar_caratula_vs_docs(caratula, datos_forwarding, datos_bl, datos_facturas, config))
         resultados_dj_origen = []
