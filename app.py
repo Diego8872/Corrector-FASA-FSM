@@ -6,10 +6,10 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from config.defaults import EMPRESAS, DESPACHANTE, CUIT_DESPACHANTE, REGIMENES, ADUANAS
 from utils.parser_di import leer_di, safe_float
-from utils.validaciones import validar_items, validar_subitems, validar_liquidacion, validar_prorrateo, validar_ncm_excel
+from utils.validaciones import validar_items, validar_subitems, validar_liquidacion, validar_prorrateo, validar_ncm_excel, validar_resumen_liquidacion
 from utils.extractor_api import extraer_forwarding, extraer_bl, extraer_cm, extraer_dj_origen, extraer_numero_re_de_ce
 from utils.parser_factura_cat import extraer_factura_cat
-from utils.cruce_docs import validar_cm_vs_di, validar_factura_vs_di, validar_caratula_vs_docs, validar_caratula_totales, validar_dj_origen, validar_bultos_vs_bl, validar_documentos_declarados, validar_resumen_cm, validar_resumen_dj_origen
+from utils.cruce_docs import validar_cm_vs_di, validar_factura_vs_di, validar_caratula_vs_docs, validar_caratula_totales, validar_dj_origen, validar_bultos_vs_bl, validar_documentos_declarados, validar_resumen_cm, validar_resumen_dj_origen, validar_resumen_items
 from utils.reporte_pdf import generar_reporte_pdf
 
 st.set_page_config(page_title="Corrector FASA/FSM", page_icon="🔍", layout="wide")
@@ -251,7 +251,9 @@ if analizar:
         todos_resultados.extend(validar_subitems(df_subitems, df_items, df_caratula, datos_cm, datos_facturas))
         todos_resultados.extend(validar_prorrateo(df_items, fob_total, flete_total_di, seguro_total_di, df_subitems, df_caratula, datos_cm, datos_facturas))
         if not df_liq.empty:
-            todos_resultados.extend(validar_liquidacion(df_liq, df_items, df_subitems, df_caratula, datos_cm, datos_facturas))
+            resultados_liquidacion = validar_liquidacion(df_liq, df_items, df_subitems, df_caratula, datos_cm, datos_facturas)
+            todos_resultados.extend(resultados_liquidacion)
+            todos_resultados.extend(validar_resumen_liquidacion(resultados_liquidacion, len(df_items)))
         if df_ncm is not None:
             todos_resultados.extend(validar_ncm_excel(df_subitems, df_ncm, df_items, df_caratula, datos_cm, datos_facturas))
         st.write(f"   ✅ {len(todos_resultados)} resultados")
@@ -262,8 +264,10 @@ if analizar:
         if datos_cm:
             resultados_cm_vs_di = validar_cm_vs_di(df_items, df_subitems, datos_cm)
             todos_resultados.extend(resultados_cm_vs_di)
+        resultados_factura_vs_di = []
         if datos_facturas:
-            todos_resultados.extend(validar_factura_vs_di(df_items, df_subitems, datos_facturas, df_ncm))
+            resultados_factura_vs_di = validar_factura_vs_di(df_items, df_subitems, datos_facturas, df_ncm)
+            todos_resultados.extend(resultados_factura_vs_di)
             todos_resultados.extend(validar_caratula_totales(caratula, datos_facturas, datos_forwarding))
         if datos_forwarding or datos_bl:
             todos_resultados.extend(validar_caratula_vs_docs(caratula, datos_forwarding, datos_bl, datos_facturas, config))
@@ -275,11 +279,15 @@ if analizar:
             todos_resultados.extend(validar_bultos_vs_bl(df_bultos, datos_bl))
         if df_caratula is not None and (datos_facturas or datos_forwarding):
             todos_resultados.extend(validar_documentos_declarados(df_caratula, datos_facturas, datos_forwarding))
-        # Resúmenes generales de CM y DJ: corren siempre que el DI declare
-        # algo en esos campos, aunque no se haya subido ningún documento
-        # (para poder informar el caso "declarado pero no subido").
+        # Resúmenes generales de CM, DJ e ítems: corren siempre que el DI
+        # declare algo en esos campos, aunque no se haya subido ningún
+        # documento (para poder informar el caso "declarado pero no
+        # subido"). Sus filas llevan "es_resumen": True y son exclusivas
+        # de la pestaña Revisión General — no se duplican en Errores/
+        # Alertas/OK, donde vive el detalle real de cada cruce.
         todos_resultados.extend(validar_resumen_cm(df_items, datos_cm, resultados_cm_vs_di))
         todos_resultados.extend(validar_resumen_dj_origen(df_items, datos_dj, resultados_dj_origen))
+        todos_resultados.extend(validar_resumen_items(resultados_cm_vs_di, resultados_factura_vs_di))
 
         status.update(label="✅ Análisis completado", state="complete")
 
@@ -353,19 +361,32 @@ if "resultados" in st.session_state:
     docs_procesados = st.session_state.get("docs_procesados", {})
 
     # Revisión General: chequeos a nivel despacho completo (carátula, BL,
-    # bultos, países prohibidos, facturas/vendedor declarados, etc.), no
-    # por ítem. Los OK se muestran con su detalle real en la pestaña
-    # dedicada. Los ERROR/ALERTA de GENERAL, en cambio, viven en las
-    # pestañas normales de Errores/Alertas (junto con los de cada ítem) —
-    # en la pestaña Revisión General solo aparece un resumen por campo que
-    # redirige a la pestaña correspondiente, para no duplicar el detalle
-    # en dos lugares ni perder visibilidad.
+    # bultos, países prohibidos, facturas/vendedor declarados, CM, DJ
+    # origen, ítems agrupados, etc.), no por ítem individual.
+    #
+    # Dos tipos de fila GENERAL:
+    #   - "es_resumen": True -> generadas por validar_resumen_cm/dj/items.
+    #     Ya traen su propio texto agrupado ("De los X declarados, Y OK",
+    #     o "CM tal: ... — ver pestaña Errores"). Son EXCLUSIVAS de esta
+    #     pestaña — nunca aparecen en Errores/Alertas/OK, para no
+    #     duplicar el detalle real que generan validar_cm_vs_di(),
+    #     validar_dj_origen() y validar_factura_vs_di().
+    #   - Sin esa marca -> chequeos generales "directos" (países, FOB,
+    #     bultos/BL, ITN, etc.) que no tienen una función de resumen
+    #     dedicada. Sus OK se muestran completos en Revisión General; si
+    #     hay ERROR/ALERTA, esta pestaña muestra solo un resumen por
+    #     campo (generado automáticamente acá) y el detalle real vive en
+    #     Errores/Alertas junto con los de cada ítem.
     es_general = lambda r: str(r.get("item", "")) == "GENERAL"
+    es_resumen = lambda r: bool(r.get("es_resumen"))
 
-    errores = [r for r in todos_resultados if r["nivel"] == "ERROR"]
-    alertas_list = [r for r in todos_resultados if r["nivel"] == "ALERTA"]
-    oks = [r for r in todos_resultados if r["nivel"] == "OK" and not es_general(r)]
-    oks_generales = [r for r in todos_resultados if r["nivel"] == "OK" and es_general(r)]
+    resultados_resumen = [r for r in todos_resultados if es_resumen(r)]
+    resultados_resto = [r for r in todos_resultados if not es_resumen(r)]
+
+    errores = [r for r in resultados_resto if r["nivel"] == "ERROR"]
+    alertas_list = [r for r in resultados_resto if r["nivel"] == "ALERTA"]
+    oks = [r for r in resultados_resto if r["nivel"] == "OK" and not es_general(r)]
+    oks_generales = [r for r in resultados_resto if r["nivel"] == "OK" and es_general(r)]
 
     errores_generales = [r for r in errores if es_general(r)]
     alertas_generales = [r for r in alertas_list if es_general(r)]
@@ -383,7 +404,7 @@ if "resultados" in st.session_state:
         if not lista:
             st.info("Sin resultados.")
             return
-        df = pd.DataFrame(lista)
+        df = pd.DataFrame(lista)[["item", "campo", "mensaje", "nivel"]]
         df.columns = ["Ítem", "Campo", "Mensaje", "Nivel"]
         st.dataframe(
             df,
@@ -400,10 +421,12 @@ if "resultados" in st.session_state:
         )
 
     def mostrar_revision_general():
-        # Los OK de GENERAL se muestran completos, con su mensaje real.
-        # Si hay ERROR/ALERTA de GENERAL, se agrega una fila resumen por
-        # campo afectado (no el detalle), señalando dónde ver el resto.
-        filas = list(oks_generales)
+        # 1) Filas de resumen (CM/DJ/Ítems agrupados): ya vienen con su
+        #    propio texto, se muestran tal cual, en todos sus niveles.
+        filas = list(resultados_resumen)
+        # 2) Chequeos generales directos: OK completos + resumen por
+        #    campo para ERROR/ALERTA (igual que antes).
+        filas.extend(oks_generales)
         if errores_generales or alertas_generales:
             campos_afectados = {}
             for r in errores_generales + alertas_generales:
@@ -428,7 +451,7 @@ if "resultados" in st.session_state:
     with tabs[0]: mostrar_revision_general()
     with tabs[1]: mostrar(errores)
     with tabs[2]: mostrar(alertas_list)
-    with tabs[3]: mostrar(oks + oks_generales)
+    with tabs[3]: mostrar(oks)
     with tabs[4]: mostrar(todos_resultados)
 
 
