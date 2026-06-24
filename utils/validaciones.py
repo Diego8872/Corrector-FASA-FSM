@@ -133,12 +133,15 @@ def validar_items(df_items: pd.DataFrame, df_subitems: pd.DataFrame = None, df_c
     ref_map = _build_ref_map(df_items, df_subitems, df_caratula, datos_cm, datos_facturas)
     resultados = []
     hubo_origen_prohibido = False
+    items_con_ajuste = 0
+    total_items = 0
 
     for _, row in df_items.iterrows():
         item = str(row.get("ITEM", "?")).strip().zfill(4)
         r = ref_map.get(item, {})
         suf = _ref(r.get("modelo",""), r.get("factura",""), r.get("cm",""))
         tiene_cm = row.get("D:CERTSM", "").strip() != ""
+        total_items += 1
 
         estado = row.get("ESTADO", "").strip()
         if "NUEVO SIN USO IMPORTADO" not in estado.upper():
@@ -194,6 +197,21 @@ def validar_items(df_items: pd.DataFrame, df_subitems: pd.DataFrame = None, df_c
             if val:
                 resultados.append(alerta(item, campo, f"Declarado: '{val}' — informativo, verificar{suf}"))
 
+        # ── Ajuste a Incluir / Ajuste a Deducir ──
+        # No se compara contra otro documento; solo se informa si alguno
+        # de los dos campos trae un valor distinto de cero, ya que ambos
+        # requieren revisión manual del despachante.
+        ajuste_incluir = safe_float(row.get("AJUSTE A INCLUIR", 0))
+        ajuste_deducir = safe_float(row.get("AJUSTE A DEDUCIR", 0))
+        if ajuste_incluir or ajuste_deducir:
+            items_con_ajuste += 1
+            partes_ajuste = []
+            if ajuste_incluir:
+                partes_ajuste.append(f"Ajuste a Incluir: {ajuste_incluir:.2f}")
+            if ajuste_deducir:
+                partes_ajuste.append(f"Ajuste a Deducir: {ajuste_deducir:.2f}")
+            resultados.append(alerta(item, "AJUSTES", f"{' | '.join(partes_ajuste)}{suf}"))
+
     # ── Resumen general de países prohibidos (país de ORIGEN) ──────────────
     # Un solo mensaje a nivel despacho en vez de repetir por ítem: si ningún
     # ítem disparó ERROR de origen prohibido, se informa que se revisó y no
@@ -201,6 +219,24 @@ def validar_items(df_items: pd.DataFrame, df_subitems: pd.DataFrame = None, df_c
     # como ERROR por ítem — no se duplica el resumen en ese caso.
     if not hubo_origen_prohibido:
         resultados.append(ok("GENERAL", "PAÍSES PROHIBIDOS", "Países prohibidos no encontrados"))
+
+    # ── Resumen general de Ajustes a Incluir/Deducir ───────────────────────
+    # Estos campos no se comparan contra otro documento, solo se informa si
+    # alguno tiene valor (requiere revisión manual). El resumen agrupado va
+    # exclusivamente en Revisión General; el detalle real (por ítem) ya
+    # quedó arriba como ALERTA, así que esta fila no se duplica ahí.
+    if items_con_ajuste:
+        resultados.append({
+            "item": "GENERAL", "campo": "AJUSTES",
+            "mensaje": f"De {total_items} ítems, {items_con_ajuste} con valor en Ajuste a Incluir/Deducir — ver pestaña Alertas",
+            "nivel": "ALERTA", "es_resumen": True,
+        })
+    else:
+        resultados.append({
+            "item": "GENERAL", "campo": "AJUSTES",
+            "mensaje": f"Ningún ítem ({total_items}) con valor en Ajuste a Incluir/Deducir",
+            "nivel": "OK", "es_resumen": True,
+        })
 
     return resultados
 
@@ -407,3 +443,84 @@ def validar_ncm_excel(df_subitems: pd.DataFrame, df_ncm: pd.DataFrame, df_items:
                     f"NCM DI {ncm_di_8} — NCM Excel {ncm_excel_8}{suf}", "ERROR"))
 
     return resultados
+
+
+# ── Resumen General: Liquidación ──────────────────────────────────────────────
+
+def validar_resumen_liquidacion(resultados_liquidacion: list, total_items: int) -> list:
+    """
+    Resumen a nivel despacho del detalle de Liquidación: cuántos ítems
+    tuvieron alguna observación (ERROR o ALERTA) en su liquidación, y de
+    qué tipo (base imponible, alícuota IVA, ingresos brutos, concepto
+    faltante, etc. — clasificado por palabras clave dentro del mensaje,
+    ya que todos los resultados de validar_liquidacion() comparten el
+    mismo campo "LIQUIDACIÓN" sin subcampos).
+
+    `resultados_liquidacion` es la lista ya generada por
+    validar_liquidacion() — se reutiliza para no recalcular el cruce.
+
+    La fila que devuelve lleva "es_resumen": True y es exclusiva de la
+    pestaña Revisión General — el detalle real por ítem sigue viviendo
+    únicamente en Errores/Alertas.
+    """
+    CAMPO = "LIQUIDACIÓN"
+
+    if not resultados_liquidacion or not total_items:
+        return []
+
+    CLASIFICACION = [
+        ("base imponible", "base imponible"),
+        ("I.V.A.", "alícuota IVA"),
+        ("INGRESOS BRUTOS", "ingresos brutos"),
+        ("TASA LEY 24196", "tasa Ley 24196"),
+        ("DUMPING", "dumping"),
+        ("Falta concepto", "concepto faltante"),
+        ("no esperado", "concepto no esperado"),
+    ]
+
+    def _clasificar(mensaje: str) -> str:
+        msg_upper = mensaje.upper()
+        for clave, etiqueta in CLASIFICACION:
+            if clave.upper() in msg_upper:
+                return etiqueta
+        return "otro"
+
+    items_con_problema = {}  # item -> {"nivel": "ERROR"|"ALERTA", "motivos": set()}
+    for r in resultados_liquidacion:
+        if r.get("campo") != CAMPO or r.get("nivel") == "OK":
+            continue
+        item = str(r.get("item", ""))
+        nivel = r.get("nivel")
+        motivo = _clasificar(str(r.get("mensaje", "")))
+        info = items_con_problema.setdefault(item, {"nivel": "ALERTA", "motivos": set()})
+        info["motivos"].add(motivo)
+        if nivel == "ERROR":
+            info["nivel"] = "ERROR"
+
+    if not items_con_problema:
+        return [{
+            "item": "GENERAL", "campo": CAMPO,
+            "mensaje": f"De {total_items} ítems, todos sin observaciones en liquidación",
+            "nivel": "OK", "es_resumen": True,
+        }]
+
+    cant_con_problema = len(items_con_problema)
+    cant_ok = total_items - cant_con_problema
+
+    motivos_totales = set()
+    for info in items_con_problema.values():
+        motivos_totales.update(info["motivos"])
+    motivos_str = ", ".join(sorted(motivos_totales))
+
+    nivel_general = "ERROR" if any(i["nivel"] == "ERROR" for i in items_con_problema.values()) else "ALERTA"
+    pestana = "Errores" if nivel_general == "ERROR" else "Alertas"
+
+    mensaje = (
+        f"De {total_items} ítems, {cant_ok} sin observaciones en liquidación — "
+        f"{cant_con_problema} ítem(s) con diferencia en {motivos_str} — ver pestaña {pestana}"
+    )
+
+    return [{
+        "item": "GENERAL", "campo": CAMPO,
+        "mensaje": mensaje, "nivel": nivel_general, "es_resumen": True,
+    }]
