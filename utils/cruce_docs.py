@@ -264,7 +264,7 @@ def validar_factura_vs_di(
 
         if not encontrado:
             resultados.append(alerta(
-                item_num, "MONTO FOB (FACTURA)",
+                item_num, "CÓDIGO (FACTURA)",
                 f"No se encontró código '{modelo_di}' en ninguna factura subida",
                 "ALERTA"
             ))
@@ -337,6 +337,7 @@ def validar_caratula_totales(caratula: dict, datos_facturas: dict, datos_forward
             items_con_diff = sorted({
                 str(r.get("item", "")) for r in (resultados_factura_vs_di or [])
                 if r.get("campo") == "MONTO FOB (FACTURA)" and r.get("nivel") != "OK"
+                and "FOB DI:" in str(r.get("mensaje", "")) and "FOB factura:" in str(r.get("mensaje", ""))
             })
             sufijo_items = f" | Ítems con diferencia de FOB vs factura: {', '.join(items_con_diff)}" if items_con_diff else ""
             resultados.append(al("FOB", f"DI: {fob_di:.2f} — Suma de facturas: {fob_total_facturas:.2f} "
@@ -1000,22 +1001,29 @@ def validar_resumen_dj_origen(df_items: pd.DataFrame, datos_dj: list, resultados
 
 # ── Resumen General: Ítems vs CM y vs Factura ─────────────────────────────────
 
-def validar_resumen_items(resultados_cm_vs_di: list, resultados_factura_vs_di: list) -> list:
+def validar_resumen_items(resultados_cm_vs_di: list, resultados_factura_vs_di: list,
+                           total_items_di: int = None) -> list:
     """
     Resumen a nivel despacho del detalle por ítem, agrupado por campo —
     no por ítem, ya que no todos los ítems tienen los mismos campos
     aplicables (CM solo aplica a ítems con CM; Factura solo a ítems que
     matchean alguna línea de factura subida).
 
-    Genera 2 líneas (si hay datos disponibles):
-      - "De X ítems con CM: NCM Y/X OK | MODELO Y/X OK | CANTIDAD Y/X OK | MONTO FOB CM Y/X OK"
-      - "De X ítems con factura: CÓDIGO Y/X OK | MONTO FOB Y/X OK | CLASIFICACIÓN Y/X OK"
+    El denominador de cada línea es siempre `total_items_di` (el total
+    real de ítems del DI, no solo los que llegaron a evaluarse en ese
+    campo) — así nunca hay ambigüedad sobre "de cuántos" se está
+    hablando. Si un ítem no llegó a evaluarse en un campo (ej. su código
+    no matcheó en ninguna factura, así que nunca se comparó el FOB), se
+    cuenta como "no comparable", distinto de "con diferencia" (sí se
+    evaluó, y dio mal).
 
-    Si algún campo no tiene el 100% OK, ese campo indica "ver pestaña
-    Errores" (o Alertas, si no hay ningún ERROR pero sí ALERTA) en vez
-    del simple "OK". El detalle real (ítem, código, factura, CM) sigue
-    viviendo únicamente en Errores/Alertas, generado por
-    validar_cm_vs_di() y validar_factura_vs_di().
+    Genera 2 líneas (si hay datos disponibles):
+      "De X ítems del DI: NCM Y/X OK | MODELO Y/X OK | ..."
+      "De X ítems del DI: CÓDIGO Y/X OK — N no encontrado(s) en factura | ..."
+
+    El detalle real (ítem, código, factura, CM) sigue viviendo
+    únicamente en Errores/Alertas — esta función solo cuenta y redirige,
+    sin listar números de ítem.
 
     Todas las filas que devuelve esta función llevan "es_resumen": True
     y son exclusivas de la sección "Revisión General".
@@ -1028,11 +1036,16 @@ def validar_resumen_items(resultados_cm_vs_di: list, resultados_factura_vs_di: l
     def ok_(msg):
         return {"item": "GENERAL", "campo": CAMPO, "mensaje": msg, "nivel": "OK", "es_resumen": True}
 
-    def _resumen_campo(resultados_fuente: list, nombre_campo_origen: str, nombre_mostrar: str):
+    if not total_items_di:
+        return resultados
+
+    def _resumen_campo(resultados_fuente: list, nombre_campo_origen: str):
         """
-        Cuenta, para un campo dado (ej. "NCM"), cuántos ítems únicos
-        tuvieron ese campo evaluado y cuántos de ellos dieron OK.
-        Retorna (total, ok_count, nivel_mas_alto_si_hay_problema).
+        Cuenta, para un campo dado (ej. "NCM (CM)"), cuántos ítems únicos
+        tuvieron ese campo evaluado, cuántos dieron OK, y el nivel más
+        alto entre los que no dieron OK (None si todos OK o no hubo
+        evaluados). El total de evaluados puede ser menor a
+        total_items_di — la diferencia es "no comparable" en ese campo.
         """
         items_evaluados = {}  # item -> nivel más alto encontrado para ese campo
         for r in resultados_fuente or []:
@@ -1040,78 +1053,123 @@ def validar_resumen_items(resultados_cm_vs_di: list, resultados_factura_vs_di: l
                 continue
             item = str(r.get("item", ""))
             nivel = r.get("nivel")
-            if item not in items_evaluados or nivel == "ERROR":
-                if items_evaluados.get(item) != "ERROR":
-                    items_evaluados[item] = nivel
+            if items_evaluados.get(item) != "ERROR":
+                items_evaluados[item] = nivel
 
-        total = len(items_evaluados)
-        if total == 0:
-            return None
-
+        evaluados = len(items_evaluados)
         ok_count = sum(1 for n in items_evaluados.values() if n == "OK")
+        no_comparable = total_items_di - evaluados
+
         nivel_problema = None
         if any(n == "ERROR" for n in items_evaluados.values()):
             nivel_problema = "ERROR"
         elif any(n == "ALERTA" for n in items_evaluados.values()):
             nivel_problema = "ALERTA"
 
-        return total, ok_count, nivel_problema
+        return evaluados, ok_count, no_comparable, nivel_problema
+
+    def _armar_parte(nombre_mostrar, evaluados, ok_count, no_comparable, nivel_problema,
+                      etiqueta_no_comparable, etiqueta_con_diferencia="con diferencia"):
+        """Arma el fragmento de texto para un campo, dentro del límite de total_items_di."""
+        if evaluados == 0 and no_comparable == 0:
+            return None, None  # este campo no corrió en absoluto, no incluir
+
+        if not nivel_problema and no_comparable == 0:
+            return f"{nombre_mostrar} {ok_count}/{total_items_di} OK", None
+
+        pestana = "Errores" if nivel_problema == "ERROR" else "Alertas"
+        con_diferencia = evaluados - ok_count
+        detalle = []
+        if no_comparable:
+            detalle.append(f"{no_comparable} {etiqueta_no_comparable}")
+        if con_diferencia:
+            detalle.append(f"{con_diferencia} {etiqueta_con_diferencia}")
+        detalle_str = ", ".join(detalle)
+        nivel_fragmento = nivel_problema or "ALERTA"  # no_comparable sin nivel_problema -> alerta por defecto
+        if not nivel_problema:
+            pestana = "Alertas"
+        parte = f"{nombre_mostrar} {ok_count}/{total_items_di} OK — {detalle_str} — ver pestaña {pestana}"
+        return parte, nivel_fragmento
 
     # ── Grupo CM ──
-    campos_cm = [("NCM (CM)", "NCM"), ("MODELO (CM)", "MODELO"), ("CANTIDAD (CM)", "CANTIDAD"), ("MONTO FOB (CM)", "MONTO FOB CM")]
+    campos_cm = [
+        ("NCM (CM)", "NCM", "sin CM declarado/subido"),
+        ("MODELO (CM)", "MODELO", "sin CM declarado/subido"),
+        ("CANTIDAD (CM)", "CANTIDAD", "sin CM declarado/subido"),
+        ("MONTO FOB (CM)", "MONTO FOB CM", "sin CM declarado/subido"),
+    ]
     partes_cm = []
-    total_cm_ref = None
     nivel_general_cm = None
-    for campo_origen, nombre_mostrar in campos_cm:
-        r = _resumen_campo(resultados_cm_vs_di, campo_origen, nombre_mostrar)
-        if r is None:
-            continue
-        total, ok_count, nivel_problema = r
-        total_cm_ref = total_cm_ref or total
-        if nivel_problema:
+    hubo_cm = False
+    for campo_origen, nombre_mostrar, etiqueta_nc in campos_cm:
+        evaluados, ok_count, no_comparable, nivel_problema = _resumen_campo(resultados_cm_vs_di, campo_origen)
+        if evaluados == 0:
+            continue  # ningún ítem tiene CM en este despacho para este campo
+        hubo_cm = True
+        # Para CM, "no comparable" son ítems sin CM en absoluto — info ya
+        # cubierta por el resumen de Certificados Mineros, así que acá no
+        # se desglosa por separado, solo evaluados/ok sobre el total real.
+        if not nivel_problema:
+            partes_cm.append(f"{nombre_mostrar} {ok_count}/{total_items_di} OK")
+        else:
             pestana = "Errores" if nivel_problema == "ERROR" else "Alertas"
-            partes_cm.append(f"{nombre_mostrar} {ok_count}/{total} — ver pestaña {pestana}")
+            partes_cm.append(f"{nombre_mostrar} {ok_count}/{total_items_di} OK — ver pestaña {pestana}")
             if nivel_problema == "ERROR":
                 nivel_general_cm = "ERROR"
             elif nivel_general_cm != "ERROR":
                 nivel_general_cm = "ALERTA"
-        else:
-            partes_cm.append(f"{nombre_mostrar} {ok_count}/{total} OK")
 
-    if partes_cm:
-        msg = f"De {total_cm_ref} ítems con CM: " + " | ".join(partes_cm)
+    if hubo_cm:
+        msg = f"De {total_items_di} ítems del DI: " + " | ".join(partes_cm)
         if nivel_general_cm:
             resultados.append(al(msg, nivel_general_cm))
         else:
             resultados.append(ok_(msg))
 
     # ── Grupo Factura (incluye Clasificación) ──
-    campos_factura = [
-        ("CÓDIGO (FACTURA)", "CÓDIGO"),
-        ("MONTO FOB (FACTURA)", "MONTO FOB"),
-        ("CÓDIGO EN CLASIFICACIÓN (EXCEL)", "CLASIFICACIÓN"),
-    ]
+    # CÓDIGO es la base: si el código no matcheó, MONTO FOB y
+    # CLASIFICACIÓN tampoco pudieron evaluarse para ese ítem — por eso
+    # ambos usan la misma cuenta de "no comparable" (= ítems sin match
+    # de código), distinta de "con diferencia" (matcheó pero dio mal).
+    evaluados_cod, ok_cod, no_comp_cod, nivel_cod = _resumen_campo(resultados_factura_vs_di, "CÓDIGO (FACTURA)")
+    evaluados_fob, ok_fob, no_comp_fob, nivel_fob = _resumen_campo(resultados_factura_vs_di, "MONTO FOB (FACTURA)")
+    evaluados_cla, ok_cla, no_comp_cla, nivel_cla = _resumen_campo(resultados_factura_vs_di, "CÓDIGO EN CLASIFICACIÓN (EXCEL)")
+
     partes_fac = []
-    total_fac_ref = None
     nivel_general_fac = None
-    for campo_origen, nombre_mostrar in campos_factura:
-        r = _resumen_campo(resultados_factura_vs_di, campo_origen, nombre_mostrar)
-        if r is None:
-            continue
-        total, ok_count, nivel_problema = r
-        total_fac_ref = total_fac_ref or total
-        if nivel_problema:
-            pestana = "Errores" if nivel_problema == "ERROR" else "Alertas"
-            partes_fac.append(f"{nombre_mostrar} {ok_count}/{total} — ver pestaña {pestana}")
-            if nivel_problema == "ERROR":
+
+    if evaluados_cod or no_comp_cod:
+        parte, nivel_frag = _armar_parte("CÓDIGO", evaluados_cod, ok_cod, 0, nivel_cod,
+                                          "no encontrado(s) en factura", "no encontrado(s) en factura")
+        if parte:
+            partes_fac.append(parte)
+            if nivel_frag == "ERROR":
                 nivel_general_fac = "ERROR"
-            elif nivel_general_fac != "ERROR":
+            elif nivel_frag and nivel_general_fac != "ERROR":
                 nivel_general_fac = "ALERTA"
-        else:
-            partes_fac.append(f"{nombre_mostrar} {ok_count}/{total} OK")
+
+    if evaluados_fob or no_comp_fob:
+        parte, nivel_frag = _armar_parte("MONTO FOB", evaluados_fob, ok_fob, no_comp_fob, nivel_fob,
+                                          "no comparable(s) (sin match de código)")
+        if parte:
+            partes_fac.append(parte)
+            if nivel_frag == "ERROR":
+                nivel_general_fac = "ERROR"
+            elif nivel_frag and nivel_general_fac != "ERROR":
+                nivel_general_fac = "ALERTA"
+
+    if evaluados_cla or no_comp_cla:
+        parte, nivel_frag = _armar_parte("CLASIFICACIÓN", evaluados_cla, ok_cla, no_comp_cla, nivel_cla,
+                                          "no comparable(s) (sin match de código)")
+        if parte:
+            partes_fac.append(parte)
+            if nivel_frag == "ERROR":
+                nivel_general_fac = "ERROR"
+            elif nivel_frag and nivel_general_fac != "ERROR":
+                nivel_general_fac = "ALERTA"
 
     if partes_fac:
-        msg = f"De {total_fac_ref} ítems con factura: " + " | ".join(partes_fac)
+        msg = f"De {total_items_di} ítems del DI: " + " | ".join(partes_fac)
         if nivel_general_fac:
             resultados.append(al(msg, nivel_general_fac))
         else:
