@@ -811,26 +811,25 @@ def validar_documentos_declarados(df_caratula: "pd.DataFrame", datos_facturas: d
 
 def validar_resumen_cm(df_items: pd.DataFrame, datos_cm: dict, resultados_cm_vs_di: list) -> list:
     """
-    Resumen a nivel despacho de los Certificados Mineros: para cada CM
-    declarado en el DI (columna D:CERTSM de cada ítem), confirma que fue
-    subido y que el detalle (NCM, código, cantidad, FOB) coincide.
+    Resumen a nivel despacho de los Certificados Mineros: cuántos de los
+    CM declarados en el DI (columna D:CERTSM de cada ítem) están OK en
+    número y contenido (NCM, código, cantidad, FOB), agrupados en una sola
+    línea — y una línea aparte solo para cada CM que tenga un problema
+    (no se listan los que están OK individualmente, para no generar una
+    línea por cada uno de potencialmente decenas de CM).
 
-    3 estados posibles por CM:
-      1. Declarado, subido, y todo el detalle OK -> OK
-      2. Declarado pero no subido / no encontrado -> ERROR
-      3. Declarado y subido, pero hay diferencias en el detalle -> ERROR/ALERTA
-         según el nivel más alto encontrado entre sus ítems.
-
-    `resultados_cm_vs_di` es la lista ya generada por validar_cm_vs_di()
-    para los mismos datos — se reutiliza para no recalcular el cruce.
+    Todas las filas que devuelve esta función llevan "es_resumen": True
+    y son exclusivas de la sección "Revisión General" — el detalle real
+    de cada problema (con ítem, código y factura) vive únicamente en
+    Errores/Alertas, generado por validar_cm_vs_di().
     """
     resultados = []
     CAMPO = "CERTIFICADOS MINEROS"
 
     def al(msg, nivel="ERROR"):
-        return {"item": "GENERAL", "campo": CAMPO, "mensaje": msg, "nivel": nivel}
+        return {"item": "GENERAL", "campo": CAMPO, "mensaje": msg, "nivel": nivel, "es_resumen": True}
     def ok_(msg):
-        return {"item": "GENERAL", "campo": CAMPO, "mensaje": msg, "nivel": "OK"}
+        return {"item": "GENERAL", "campo": CAMPO, "mensaje": msg, "nivel": "OK", "es_resumen": True}
 
     if df_items is None or df_items.empty:
         return resultados
@@ -862,22 +861,36 @@ def validar_resumen_cm(df_items: pd.DataFrame, datos_cm: dict, resultados_cm_vs_
         if nivel_por_cm.get(numero_cm) != "ERROR":
             nivel_por_cm[numero_cm] = nivel if nivel == "ERROR" else (nivel_por_cm.get(numero_cm) or nivel)
 
+    total = len(cms_declarados)
+    con_problema = []  # (numero_cm, motivo, nivel)
+
     for numero_cm in sorted(cms_declarados):
         cm_data = datos_cm.get(numero_cm)
 
         if not cm_data or "error" in cm_data:
-            resultados.append(al(
-                f"CM {numero_cm}: declarado en el despacho pero no se encontró su PDF subido / no se pudo procesar"))
+            con_problema.append((numero_cm,
+                "declarado en el despacho pero no se encontró su PDF subido / no se pudo procesar",
+                "ERROR"))
             continue
 
         nivel_detalle = nivel_por_cm.get(numero_cm)
         if nivel_detalle:
-            resultados.append(al(
-                f"CM {numero_cm}: número OK, pero hay diferencias en el contenido — ver pestaña Errores/Alertas",
+            pestana = "Errores" if nivel_detalle == "ERROR" else "Alertas"
+            con_problema.append((numero_cm,
+                f"número OK, pero hay diferencias en el contenido — ver pestaña {pestana}",
                 nivel_detalle))
-        else:
-            resultados.append(ok_(
-                f"CM {numero_cm}: número y contenido (NCM, código, cantidad, FOB) verificados OK"))
+
+    ok_count = total - len(con_problema)
+    if con_problema:
+        resultados.append(al(
+            f"De los {total} CM declarados, {ok_count} están OK en número, NCM, código, cantidad y FOB",
+            "ERROR" if any(n == "ERROR" for _, _, n in con_problema) else "ALERTA"))
+    else:
+        resultados.append(ok_(
+            f"De los {total} CM declarados, {ok_count} están OK en número, NCM, código, cantidad y FOB"))
+
+    for numero_cm, motivo, nivel in con_problema:
+        resultados.append(al(f"CM {numero_cm}: {motivo}", nivel))
 
     return resultados
 
@@ -886,26 +899,24 @@ def validar_resumen_cm(df_items: pd.DataFrame, datos_cm: dict, resultados_cm_vs_
 
 def validar_resumen_dj_origen(df_items: pd.DataFrame, datos_dj: list, resultados_dj_origen: list) -> list:
     """
-    Resumen a nivel despacho de las DJ de Origen No Preferencial: para cada
-    DJ declarada en el DI (campo D:DJ-ORIG-NOPREFER de cada ítem — puede
-    haber más de una en el despacho), confirma que fue subida y que el
-    detalle (NCM, cantidad, país, unidad, CIF) coincide.
+    Resumen a nivel despacho de las DJ de Origen No Preferencial: cuántas
+    de las DJ declaradas en el DI (campo D:DJ-ORIG-NOPREFER de cada
+    ítem — puede haber más de una en el despacho) están OK en número y
+    contenido (NCM, cantidad, país, CIF), agrupadas en una sola línea —
+    y una línea aparte solo para cada DJ que tenga un problema.
 
-    3 estados posibles por DJ:
-      1. Declarada, subida, y todo el detalle OK -> OK
-      2. Declarada pero no subida / no encontrada -> ERROR
-      3. Declarada y subida, pero hay diferencias en el detalle -> ERROR/ALERTA
-
-    `resultados_dj_origen` es la lista ya generada por validar_dj_origen()
-    para los mismos datos — se reutiliza para no recalcular el cruce.
+    Todas las filas que devuelve esta función llevan "es_resumen": True
+    y son exclusivas de la sección "Revisión General" — el detalle real
+    de cada problema vive únicamente en Errores/Alertas, generado por
+    validar_dj_origen().
     """
     resultados = []
     CAMPO = "DJ ORIGEN"
 
     def al(msg, nivel="ERROR"):
-        return {"item": "GENERAL", "campo": CAMPO, "mensaje": msg, "nivel": nivel}
+        return {"item": "GENERAL", "campo": CAMPO, "mensaje": msg, "nivel": nivel, "es_resumen": True}
     def ok_(msg):
-        return {"item": "GENERAL", "campo": CAMPO, "mensaje": msg, "nivel": "OK"}
+        return {"item": "GENERAL", "campo": CAMPO, "mensaje": msg, "nivel": "OK", "es_resumen": True}
 
     if df_items is None or df_items.empty:
         return resultados
@@ -936,6 +947,9 @@ def validar_resumen_dj_origen(df_items: pd.DataFrame, datos_dj: list, resultados
         for r in (resultados_dj_origen or [])
     )
 
+    total = len(djs_declaradas)
+    con_problema = []  # (dj, motivo, nivel)
+
     for dj_declarada in sorted(djs_declaradas):
         coincide = any(
             dj_declarada.upper() in if_sub or if_sub in dj_declarada.upper()
@@ -943,20 +957,149 @@ def validar_resumen_dj_origen(df_items: pd.DataFrame, datos_dj: list, resultados
         )
 
         if not ifs_subidos or not coincide:
-            resultados.append(al(
-                f"DJ {dj_declarada}: declarada en el despacho pero no se encontró su PDF subido"))
+            con_problema.append((dj_declarada,
+                "declarada en el despacho pero no se encontró su PDF subido", "ERROR"))
             continue
 
         if hay_error_detalle:
-            resultados.append(al(
-                f"DJ {dj_declarada}: número OK, pero hay diferencias en el contenido — ver pestaña Errores/Alertas",
-                "ERROR"))
+            con_problema.append((dj_declarada,
+                "número OK, pero hay diferencias en el contenido — ver pestaña Errores", "ERROR"))
         elif hay_alerta_detalle:
-            resultados.append(al(
-                f"DJ {dj_declarada}: número OK, pero hay diferencias en el contenido — ver pestaña Errores/Alertas",
-                "ALERTA"))
+            con_problema.append((dj_declarada,
+                "número OK, pero hay diferencias en el contenido — ver pestaña Alertas", "ALERTA"))
+
+    ok_count = total - len(con_problema)
+    if con_problema:
+        resultados.append(al(
+            f"De las {total} DJ declaradas, {ok_count} están OK en número, NCM, cantidad, país y CIF",
+            "ERROR" if any(n == "ERROR" for _, _, n in con_problema) else "ALERTA"))
+    else:
+        resultados.append(ok_(
+            f"De las {total} DJ declaradas, {ok_count} están OK en número, NCM, cantidad, país y CIF"))
+
+    for dj_declarada, motivo, nivel in con_problema:
+        resultados.append(al(f"DJ {dj_declarada}: {motivo}", nivel))
+
+    return resultados
+
+
+# ── Resumen General: Ítems vs CM y vs Factura ─────────────────────────────────
+
+def validar_resumen_items(resultados_cm_vs_di: list, resultados_factura_vs_di: list) -> list:
+    """
+    Resumen a nivel despacho del detalle por ítem, agrupado por campo —
+    no por ítem, ya que no todos los ítems tienen los mismos campos
+    aplicables (CM solo aplica a ítems con CM; Factura solo a ítems que
+    matchean alguna línea de factura subida).
+
+    Genera 2 líneas (si hay datos disponibles):
+      - "De X ítems con CM: NCM Y/X OK | MODELO Y/X OK | CANTIDAD Y/X OK | MONTO FOB CM Y/X OK"
+      - "De X ítems con factura: CÓDIGO Y/X OK | MONTO FOB Y/X OK | CLASIFICACIÓN Y/X OK"
+
+    Si algún campo no tiene el 100% OK, ese campo indica "ver pestaña
+    Errores" (o Alertas, si no hay ningún ERROR pero sí ALERTA) en vez
+    del simple "OK". El detalle real (ítem, código, factura, CM) sigue
+    viviendo únicamente en Errores/Alertas, generado por
+    validar_cm_vs_di() y validar_factura_vs_di().
+
+    Todas las filas que devuelve esta función llevan "es_resumen": True
+    y son exclusivas de la sección "Revisión General".
+    """
+    resultados = []
+    CAMPO = "ÍTEMS"
+
+    def al(msg, nivel="ERROR"):
+        return {"item": "GENERAL", "campo": CAMPO, "mensaje": msg, "nivel": nivel, "es_resumen": True}
+    def ok_(msg):
+        return {"item": "GENERAL", "campo": CAMPO, "mensaje": msg, "nivel": "OK", "es_resumen": True}
+
+    def _resumen_campo(resultados_fuente: list, nombre_campo_origen: str, nombre_mostrar: str):
+        """
+        Cuenta, para un campo dado (ej. "NCM"), cuántos ítems únicos
+        tuvieron ese campo evaluado y cuántos de ellos dieron OK.
+        Retorna (total, ok_count, nivel_mas_alto_si_hay_problema).
+        """
+        items_evaluados = {}  # item -> nivel más alto encontrado para ese campo
+        for r in resultados_fuente or []:
+            if r.get("campo") != nombre_campo_origen:
+                continue
+            item = str(r.get("item", ""))
+            nivel = r.get("nivel")
+            if item not in items_evaluados or nivel == "ERROR":
+                if items_evaluados.get(item) != "ERROR":
+                    items_evaluados[item] = nivel
+
+        total = len(items_evaluados)
+        if total == 0:
+            return None
+
+        ok_count = sum(1 for n in items_evaluados.values() if n == "OK")
+        nivel_problema = None
+        if any(n == "ERROR" for n in items_evaluados.values()):
+            nivel_problema = "ERROR"
+        elif any(n == "ALERTA" for n in items_evaluados.values()):
+            nivel_problema = "ALERTA"
+
+        return total, ok_count, nivel_problema
+
+    # ── Grupo CM ──
+    campos_cm = [("NCM", "NCM"), ("MODELO", "MODELO"), ("CANTIDAD", "CANTIDAD"), ("MONTO FOB", "MONTO FOB CM")]
+    partes_cm = []
+    total_cm_ref = None
+    nivel_general_cm = None
+    for campo_origen, nombre_mostrar in campos_cm:
+        r = _resumen_campo(resultados_cm_vs_di, campo_origen, nombre_mostrar)
+        if r is None:
+            continue
+        total, ok_count, nivel_problema = r
+        total_cm_ref = total_cm_ref or total
+        if nivel_problema:
+            pestana = "Errores" if nivel_problema == "ERROR" else "Alertas"
+            partes_cm.append(f"{nombre_mostrar} {ok_count}/{total} — ver pestaña {pestana}")
+            if nivel_problema == "ERROR":
+                nivel_general_cm = "ERROR"
+            elif nivel_general_cm != "ERROR":
+                nivel_general_cm = "ALERTA"
         else:
-            resultados.append(ok_(
-                f"DJ {dj_declarada}: número y contenido (NCM, cantidad, país, CIF) verificados OK"))
+            partes_cm.append(f"{nombre_mostrar} {ok_count}/{total} OK")
+
+    if partes_cm:
+        msg = f"De {total_cm_ref} ítems con CM: " + " | ".join(partes_cm)
+        if nivel_general_cm:
+            resultados.append(al(msg, nivel_general_cm))
+        else:
+            resultados.append(ok_(msg))
+
+    # ── Grupo Factura (incluye Clasificación) ──
+    campos_factura = [
+        ("CÓDIGO (FACTURA)", "CÓDIGO"),
+        ("MONTO FOB (FACTURA)", "MONTO FOB"),
+        ("CÓDIGO EN CLASIFICACIÓN", "CLASIFICACIÓN"),
+    ]
+    partes_fac = []
+    total_fac_ref = None
+    nivel_general_fac = None
+    for campo_origen, nombre_mostrar in campos_factura:
+        r = _resumen_campo(resultados_factura_vs_di, campo_origen, nombre_mostrar)
+        if r is None:
+            continue
+        total, ok_count, nivel_problema = r
+        total_fac_ref = total_fac_ref or total
+        if nivel_problema:
+            pestana = "Errores" if nivel_problema == "ERROR" else "Alertas"
+            partes_fac.append(f"{nombre_mostrar} {ok_count}/{total} — ver pestaña {pestana}")
+            if nivel_problema == "ERROR":
+                nivel_general_fac = "ERROR"
+            elif nivel_general_fac != "ERROR":
+                nivel_general_fac = "ALERTA"
+        else:
+            partes_fac.append(f"{nombre_mostrar} {ok_count}/{total} OK")
+
+    if partes_fac:
+        msg = f"De {total_fac_ref} ítems con factura: " + " | ".join(partes_fac)
+        if nivel_general_fac:
+            resultados.append(al(msg, nivel_general_fac))
+        else:
+            resultados.append(ok_(msg))
 
     return resultados
