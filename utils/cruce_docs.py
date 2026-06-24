@@ -247,7 +247,7 @@ def validar_factura_vs_di(
                         f"FOB DI: {fob_di:.2f} — FOB factura: {fob_esperado:.2f} "
                         f"(dif: {abs(fob_di - fob_esperado):.2f}) | "
                         f"Código: {codigo_ref} | Factura: {nro_factura}",
-                        "ALERTA"
+                        "ERROR"
                     ))
                 else:
                     resultados.append(ok(
@@ -298,7 +298,8 @@ def _normalizar_incoterm(texto: str) -> str:
 
 # ── Validación de Totales de Carátula (FOB, Moneda, Incoterm) ─────────────────
 
-def validar_caratula_totales(caratula: dict, datos_facturas: dict, datos_forwarding: dict = None) -> list:
+def validar_caratula_totales(caratula: dict, datos_facturas: dict, datos_forwarding: dict = None,
+                              resultados_factura_vs_di: list = None) -> list:
     """
     Valida, contra la carátula del DI:
       - FOB total: suma de total_factura de todas las facturas subidas.
@@ -308,6 +309,11 @@ def validar_caratula_totales(caratula: dict, datos_facturas: dict, datos_forward
         declarado en la carátula. Si una factura difiere de otra, o de
         la carátula, se alerta.
     No requiere llamadas a la API — todo proviene de datos ya extraídos.
+
+    `resultados_factura_vs_di`, si se pasa, es la lista ya generada por
+    validar_factura_vs_di() para los mismos datos — se reutiliza solo
+    para enriquecer el mensaje de FOB con los ítems específicos que ya
+    tienen diferencia detectada (no se recalcula nada).
     """
     resultados = []
 
@@ -324,8 +330,17 @@ def validar_caratula_totales(caratula: dict, datos_facturas: dict, datos_forward
         fob_di = safe_float(_buscar_caratula(caratula, "FOB") or 0)
 
         if round(fob_di, 2) != fob_total_facturas:
+            # Buscar, entre los resultados ya calculados de MONTO FOB
+            # (FACTURA), los ítems con diferencia — para orientar la
+            # revisión hacia la causa probable de la diferencia del total,
+            # en vez de dejar solo el número agregado.
+            items_con_diff = sorted({
+                str(r.get("item", "")) for r in (resultados_factura_vs_di or [])
+                if r.get("campo") == "MONTO FOB (FACTURA)" and r.get("nivel") != "OK"
+            })
+            sufijo_items = f" | Ítems con diferencia de FOB vs factura: {', '.join(items_con_diff)}" if items_con_diff else ""
             resultados.append(al("FOB", f"DI: {fob_di:.2f} — Suma de facturas: {fob_total_facturas:.2f} "
-                                          f"(dif: {abs(fob_di - fob_total_facturas):.2f})", "ERROR"))
+                                          f"(dif: {abs(fob_di - fob_total_facturas):.2f}){sufijo_items}", "ERROR"))
         else:
             resultados.append(ok_("FOB", f"FOB total correcto: {fob_di:.2f}"))
 
