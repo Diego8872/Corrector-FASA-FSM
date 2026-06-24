@@ -14,6 +14,21 @@ from utils.reporte_pdf import generar_reporte_pdf
 
 st.set_page_config(page_title="Corrector FASA/FSM", page_icon="🔍", layout="wide")
 
+# ─── RESETEO (botón "Nuevo análisis") ─────────────────────────────────────────
+# Debe correr ANTES de instanciar los uploaders/widgets, ya que en Streamlit
+# no se puede vaciar un file_uploader después de creado — solo borrando su
+# key de session_state antes de que el script vuelva a renderizarlo. El
+# caché de CMs (cache_cm) se mantiene a propósito, para no perder llamadas
+# a la API ya hechas si se vuelve a analizar un CM repetido.
+if st.session_state.get("_resetear", False):
+    claves_a_borrar = [
+        "di", "facturas", "forwarding", "bl", "ncm", "dj_origen", "cms",
+        "resultados", "config", "docs_procesados", "referencia", "numero_di",
+        "referencia_input", "_resetear",
+    ]
+    for k in claves_a_borrar:
+        st.session_state.pop(k, None)
+
 st.markdown("""
 <style>
 .titulo { font-size: 1.8rem; font-weight: 700; color: #1F3864; margin-bottom: 0.2rem; }
@@ -21,8 +36,14 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-st.markdown('<div class="titulo">🔍 Corrector de Despachos FASA/FSM</div>', unsafe_allow_html=True)
-st.markdown('<div class="subtitulo">Validación automática de despachos de importación — Finning Soluciones Mineras</div>', unsafe_allow_html=True)
+col_titulo, col_reset = st.columns([5, 1])
+with col_titulo:
+    st.markdown('<div class="titulo">🔍 Corrector de Despachos FASA/FSM</div>', unsafe_allow_html=True)
+    st.markdown('<div class="subtitulo">Validación automática de despachos de importación — Finning Soluciones Mineras</div>', unsafe_allow_html=True)
+with col_reset:
+    if st.button("🆕 Nuevo análisis", use_container_width=True, help="Limpia documentos cargados y resultados para analizar un despacho nuevo. El caché de CMs ya procesados se mantiene."):
+        st.session_state["_resetear"] = True
+        st.rerun()
 
 # ─── SIDEBAR ─────────────────────────────────────────────────────────────────
 with st.sidebar:
@@ -40,7 +61,8 @@ config = {"empresa": empresa, "cuit_ie": cuit_ie, "regimen": regimen, "aduana": 
 
 # ─── REFERENCIA ──────────────────────────────────────────────────────────────
 referencia = st.text_input("📌 Referencia de la operación a analizar",
-    placeholder="Ej: FSM-2026-0612", help="Se usa para nombrar los archivos de salida (PDF / Excel).")
+    placeholder="Ej: FSM-2026-0612", help="Se usa para nombrar los archivos de salida (PDF / Excel).",
+    key="referencia_input")
 
 # ─── DOCUMENTOS ──────────────────────────────────────────────────────────────
 st.subheader("📁 Carga de documentos")
