@@ -141,18 +141,29 @@ def generar_reporte_pdf(todos_resultados: list, config: dict, numero_di: str = "
     # ─── SEPARACIÓN GENERAL vs ÍTEMS ──────────────────────────────────────────
     # Revisión General: chequeos a nivel despacho completo (carátula, BL,
     # bultos, países prohibidos, facturas/vendedor declarados, CM, DJ
-    # origen, etc.), no por ítem. Los OK se muestran en su propia sección
-    # con el detalle real. Los ERROR/ALERTA de GENERAL, en cambio, viven
-    # en las secciones normales de Errores/Alertas (junto con los de cada
-    # ítem) — en Revisión General solo aparece un resumen por campo que
-    # redirige a la sección correspondiente, para no duplicar el detalle.
+    # origen, ítems agrupados, etc.), no por ítem individual.
+    #
+    # Dos tipos de fila GENERAL:
+    #   - "es_resumen": True -> generadas por validar_resumen_cm/dj/items.
+    #     Ya traen su propio texto agrupado. Son EXCLUSIVAS de Revisión
+    #     General — nunca aparecen en Errores/Alertas/OK, para no
+    #     duplicar el detalle real (validar_cm_vs_di, validar_dj_origen,
+    #     validar_factura_vs_di).
+    #   - Sin esa marca -> chequeos generales "directos" (países, FOB,
+    #     bultos/BL, ITN, etc.). Sus OK se muestran completos en Revisión
+    #     General; si hay ERROR/ALERTA, se agrega solo un resumen por
+    #     campo (generado acá) y el detalle real vive en Errores/Alertas.
     es_general = lambda r: str(r.get("item", "")) == "GENERAL"
+    es_resumen = lambda r: bool(r.get("es_resumen"))
+
+    resultados_resumen = [r for r in todos_resultados if es_resumen(r)]
+    resultados_resto = [r for r in todos_resultados if not es_resumen(r)]
 
     # ─── RESUMEN EJECUTIVO ────────────────────────────────────────────────────
-    errores  = [r for r in todos_resultados if r["nivel"] == "ERROR"]
-    alertas  = [r for r in todos_resultados if r["nivel"] == "ALERTA"]
-    oks      = [r for r in todos_resultados if r["nivel"] == "OK" and not es_general(r)]
-    oks_generales = [r for r in todos_resultados if r["nivel"] == "OK" and es_general(r)]
+    errores  = [r for r in resultados_resto if r["nivel"] == "ERROR"]
+    alertas  = [r for r in resultados_resto if r["nivel"] == "ALERTA"]
+    oks      = [r for r in resultados_resto if r["nivel"] == "OK" and not es_general(r)]
+    oks_generales = [r for r in resultados_resto if r["nivel"] == "OK" and es_general(r)]
 
     errores_generales = [r for r in errores if es_general(r)]
     alertas_generales = [r for r in alertas if es_general(r)]
@@ -161,7 +172,7 @@ def generar_reporte_pdf(todos_resultados: list, config: dict, numero_di: str = "
 
     resumen_data = [
         ["", "Cantidad", "Descripción"],
-        ["🌐  GENERAL",   str(len(oks_generales)), "Revisión a nivel despacho completo (carátula, BL, bultos, países, CM, DJ, etc.)"],
+        ["🌐  GENERAL",   str(len(oks_generales) + len(resultados_resumen)), "Revisión a nivel despacho completo (carátula, BL, bultos, países, CM, DJ, ítems, etc.)"],
         ["❌  ERRORES",   str(len(errores)),  "Inconsistencias críticas que deben corregirse antes de oficializar"],
         ["⚠️  ALERTAS",   str(len(alertas)),  "Situaciones a verificar — pueden ser correctas según el caso"],
         ["✅  OK",        str(len(oks) + len(oks_generales)), "Validaciones superadas correctamente"],
@@ -243,11 +254,13 @@ def generar_reporte_pdf(todos_resultados: list, config: dict, numero_di: str = "
         story.append(t)
 
     # ─── REVISIÓN GENERAL ─────────────────────────────────────────────────────
-    # Va primero: panorama global del despacho. Muestra el detalle real de
-    # los OK. Si hay ERROR/ALERTA a nivel general, agrega una fila resumen
-    # por campo afectado (no el detalle, que vive en Errores/Alertas) para
-    # no duplicar información y mantener un solo lugar de verdad.
-    filas_revision_general = list(oks_generales)
+    # Va primero: panorama global del despacho. Muestra primero los
+    # resúmenes agrupados de CM/DJ/Ítems (ya con su propio texto), luego
+    # el detalle real de los OK directos (países, FOB, bultos/BL, etc.).
+    # Si hay ERROR/ALERTA en los chequeos directos (sin función de
+    # resumen dedicada, ej. ITN), agrega una fila resumen por campo
+    # afectado en vez del detalle, que vive en Errores/Alertas.
+    filas_revision_general = list(resultados_resumen) + list(oks_generales)
     if errores_generales or alertas_generales:
         campos_afectados = {}
         for r in errores_generales + alertas_generales:
@@ -260,10 +273,12 @@ def generar_reporte_pdf(todos_resultados: list, config: dict, numero_di: str = "
             if cuenta["ALERTA"]:
                 partes.append(f"{cuenta['ALERTA']} alerta(s)")
             seccion = "Errores" if cuenta["ERROR"] else "Alertas"
+            nivel_resumen = "ERROR" if cuenta["ERROR"] else "ALERTA"
             filas_revision_general.append({
                 "item": "GENERAL",
                 "campo": campo,
                 "mensaje": f"Hay {' y '.join(partes)} — ver sección \"{seccion}\"",
+                "nivel": nivel_resumen,
             })
 
     if filas_revision_general:
