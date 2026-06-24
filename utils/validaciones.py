@@ -136,6 +136,9 @@ def validar_items(df_items: pd.DataFrame, df_subitems: pd.DataFrame = None, df_c
     items_con_ajuste = 0
     total_items = 0
     items_con_ajuste_lista = []
+    # Acumulador para el resumen agrupado por valor de los 3 campos
+    # informativos: {campo: {valor: [items]}}
+    valores_informativos = {"I:DNRT-EXC-OPC": {}, "I:AUTOPARTESEG-OPC": {}, "I:DNRT-OPC": {}}
 
     for _, row in df_items.iterrows():
         item = str(row.get("ITEM", "?")).strip().zfill(4)
@@ -197,6 +200,7 @@ def validar_items(df_items: pd.DataFrame, df_subitems: pd.DataFrame = None, df_c
             val = row.get(campo, "").strip()
             if val:
                 resultados.append(alerta(item, campo, f"Declarado: '{val}' — informativo, verificar{suf}"))
+                valores_informativos[campo].setdefault(val, []).append(item)
 
         # ── Ajuste a Incluir / Ajuste a Deducir ──
         # No se compara contra otro documento; solo se informa si alguno
@@ -240,6 +244,30 @@ def validar_items(df_items: pd.DataFrame, df_subitems: pd.DataFrame = None, df_c
             "mensaje": f"Ningún ítem ({total_items}) con valor en Ajuste a Incluir/Deducir",
             "nivel": "OK", "es_resumen": True,
         })
+
+    # ── Resumen general de campos informativos (DNRT-EXC, AUTOPARTESEG, DNRT) ──
+    # Estos 3 campos son declarativos/informativos y suelen repetirse con el
+    # mismo valor en muchos ítems — en vez de obligar a leer una fila por
+    # ítem, se agrupa por valor único declarado. El detalle real (por
+    # ítem) sigue arriba como ALERTA; este resumen es exclusivo de
+    # Revisión General.
+    for campo, valores in valores_informativos.items():
+        if not valores:
+            resultados.append({
+                "item": "GENERAL", "campo": campo,
+                "mensaje": f"Ningún ítem con valor declarado en {campo}",
+                "nivel": "OK", "es_resumen": True,
+            })
+            continue
+        for valor, items_lista in valores.items():
+            cant = len(items_lista)
+            etiqueta_items = "ítem" if cant == 1 else "ítems"
+            items_str = ", ".join(items_lista)
+            resultados.append({
+                "item": "GENERAL", "campo": campo,
+                "mensaje": f"Valor '{valor}' declarado en {cant} {etiqueta_items}: {items_str} — ver pestaña Alertas",
+                "nivel": "ALERTA", "es_resumen": True,
+            })
 
     return resultados
 
