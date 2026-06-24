@@ -40,10 +40,10 @@ def _validar_codigo_en_clasificacion(codigo: str, codigos_clasi: set, item_num: 
     if not codigos_clasi:
         return []  # sin clasificación cargada, no validar
     if codigo in codigos_clasi:
-        return [ok(item_num, "CÓDIGO EN CLASIFICACIÓN",
+        return [ok(item_num, "CÓDIGO EN CLASIFICACIÓN (EXCEL)",
                    f"Código '{codigo}' verificado en clasificación | Factura: {nro_factura}")]
     else:
-        return [alerta(item_num, "CÓDIGO EN CLASIFICACIÓN",
+        return [alerta(item_num, "CÓDIGO EN CLASIFICACIÓN (EXCEL)",
                        f"Código '{codigo}' NO encontrado en clasificación — verificar parseo | Factura: {nro_factura}",
                        "ALERTA")]
 
@@ -117,39 +117,39 @@ def validar_cm_vs_di(df_items: pd.DataFrame, df_subitems: pd.DataFrame, datos_cm
 
                 ncm_cm_8 = item_cm.get("ncm_8_digitos", "").replace(".", "")[:8]
                 if ncm_di_8 != ncm_cm_8:
-                    resultados.append(alerta(item_num, "NCM",
+                    resultados.append(alerta(item_num, "NCM (CM)",
                         f"[CM: {numero_cm}] Código: {modelo_di} | NCM DI: {ncm_di_8} — NCM CM: {ncm_cm_8}{suf_fac}", "ERROR"))
                 else:
-                    resultados.append(ok(item_num, "NCM", f"Código: {modelo_di} | NCM correcto: {ncm_di_8}{suf_fac}"))
+                    resultados.append(ok(item_num, "NCM (CM)", f"Código: {modelo_di} | NCM correcto: {ncm_di_8}{suf_fac}"))
 
                 codigo_cm = normalizar_codigo(item_cm.get("codigo_parte", ""))
                 if modelo_di != codigo_cm:
-                    resultados.append(alerta(item_num, "MODELO",
+                    resultados.append(alerta(item_num, "MODELO (CM)",
                         f"[CM: {numero_cm}] Código DI: '{modelo_di}' — Código CM: '{codigo_cm}'{suf_fac}",
                         "ERROR"))
                 else:
-                    resultados.append(ok(item_num, "MODELO", f"Código de parte correcto: {modelo_di}{suf_fac}"))
+                    resultados.append(ok(item_num, "MODELO (CM)", f"Código de parte correcto: {modelo_di}{suf_fac}"))
 
                 cantidad_cm = safe_float(item_cm.get("cantidad", 0))
                 if cantidad_di > cantidad_cm:
-                    resultados.append(alerta(item_num, "CANTIDAD",
+                    resultados.append(alerta(item_num, "CANTIDAD (CM)",
                         f"[CM: {numero_cm}] Código: {modelo_di} | Cantidad DI ({cantidad_di}) supera habilitado en CM ({cantidad_cm}){suf_fac}",
                         "ERROR"))
                 elif abs(cantidad_di - cantidad_cm) > 0.01:
-                    resultados.append(alerta(item_num, "CANTIDAD",
+                    resultados.append(alerta(item_num, "CANTIDAD (CM)",
                         f"[CM: {numero_cm}] Código: {modelo_di} | Cantidad DI ({cantidad_di}) distinta a la habilitada en CM ({cantidad_cm}) — usa solo una parte del cupo, verificar si es intencional{suf_fac}",
                         "ALERTA"))
                 else:
-                    resultados.append(ok(item_num, "CANTIDAD", f"Código: {modelo_di} | Cantidad OK: {cantidad_di} = {cantidad_cm}{suf_fac}"))
+                    resultados.append(ok(item_num, "CANTIDAD (CM)", f"Código: {modelo_di} | Cantidad OK: {cantidad_di} = {cantidad_cm}{suf_fac}"))
 
                 fob_cm = safe_float(item_cm.get("valor_total_fob", 0))
                 if abs(fob_di - fob_cm) > TOLERANCIA_FOB:
-                    resultados.append(alerta(item_num, "MONTO FOB",
+                    resultados.append(alerta(item_num, "MONTO FOB (CM)",
                         f"[CM: {numero_cm}] Código: {item_cm.get('codigo_parte','')} | "
                         f"FOB DI: {fob_di:.2f} — CM: {fob_cm:.2f} (dif: {abs(fob_di - fob_cm):.2f}){suf_fac}",
                         "ALERTA"))
                 else:
-                    resultados.append(ok(item_num, "MONTO FOB", f"FOB correcto: {fob_di:.2f}{suf_fac}"))
+                    resultados.append(ok(item_num, "MONTO FOB (CM)", f"FOB correcto: {fob_di:.2f}{suf_fac}"))
 
     return resultados
 
@@ -848,7 +848,7 @@ def validar_resumen_cm(df_items: pd.DataFrame, datos_cm: dict, resultados_cm_vs_
     # Niveles encontrados en el detalle (NCM/MODELO/CANTIDAD/MONTO FOB) por
     # CM. El número de CM se infiere del propio mensaje, que siempre
     # empieza con "[CM: <numero>] ..." en validar_cm_vs_di.
-    campos_detalle_cm = {"NCM", "MODELO", "CANTIDAD", "MONTO FOB"}
+    campos_detalle_cm = {"NCM (CM)", "MODELO (CM)", "CANTIDAD (CM)", "MONTO FOB (CM)"}
     nivel_por_cm = {}  # numero_cm -> "ERROR" | "ALERTA" (el más alto encontrado)
     for r in resultados_cm_vs_di or []:
         if r.get("campo") not in campos_detalle_cm or r.get("nivel") == "OK":
@@ -1043,7 +1043,7 @@ def validar_resumen_items(resultados_cm_vs_di: list, resultados_factura_vs_di: l
         return total, ok_count, nivel_problema
 
     # ── Grupo CM ──
-    campos_cm = [("NCM", "NCM"), ("MODELO", "MODELO"), ("CANTIDAD", "CANTIDAD"), ("MONTO FOB", "MONTO FOB CM")]
+    campos_cm = [("NCM (CM)", "NCM"), ("MODELO (CM)", "MODELO"), ("CANTIDAD (CM)", "CANTIDAD"), ("MONTO FOB (CM)", "MONTO FOB CM")]
     partes_cm = []
     total_cm_ref = None
     nivel_general_cm = None
@@ -1074,7 +1074,7 @@ def validar_resumen_items(resultados_cm_vs_di: list, resultados_factura_vs_di: l
     campos_factura = [
         ("CÓDIGO (FACTURA)", "CÓDIGO"),
         ("MONTO FOB (FACTURA)", "MONTO FOB"),
-        ("CÓDIGO EN CLASIFICACIÓN", "CLASIFICACIÓN"),
+        ("CÓDIGO EN CLASIFICACIÓN (EXCEL)", "CLASIFICACIÓN"),
     ]
     partes_fac = []
     total_fac_ref = None
