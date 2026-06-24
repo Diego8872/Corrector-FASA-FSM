@@ -55,11 +55,12 @@ def _limpiar_codigo(part_raw: str) -> str:
     Normaliza código de parte CAT usando la regla estructural del catálogo:
       - Empieza con 3 dígitos (todo numérico): tomar primeros 7 chars → '541-7108(' → '5417108'
       - Tiene letra inicial: tomar primeros 6 chars              → '1K-6853CO' → '1K6853'
-    Primero quita guiones y espacios, luego ceros de relleno a la
-    izquierda (no son parte del código real), luego recorta.
+    Primero quita guiones y espacios, luego recorta.
+
+    IMPORTANTE: no se sacan ceros iniciales. Un cero al principio puede
+    ser parte real del código (ej. "0S-0509L" -> "0S0509"), no relleno.
     """
     s = re.sub(r'[-\s]', '', part_raw.strip().upper())
-    s = s.lstrip('0')
     if re.match(r'^\d{3}', s):
         return s[:7]
     else:
@@ -72,7 +73,6 @@ def _origen(part_raw: str, sufijos: dict) -> str:
     Usa el mapa de sufijos extraído dinámicamente del invoice.
     """
     s = re.sub(r'[-\s]', '', part_raw.strip().upper())
-    s = s.lstrip('0')
     # Código base (sin sufijo)
     if re.match(r'^\d{3}', s):
         base = s[:7]
