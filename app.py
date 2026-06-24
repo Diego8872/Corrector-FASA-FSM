@@ -9,7 +9,7 @@ from utils.parser_di import leer_di, safe_float
 from utils.validaciones import validar_items, validar_subitems, validar_liquidacion, validar_prorrateo, validar_ncm_excel
 from utils.extractor_api import extraer_forwarding, extraer_bl, extraer_cm, extraer_dj_origen, extraer_numero_re_de_ce
 from utils.parser_factura_cat import extraer_factura_cat
-from utils.cruce_docs import validar_cm_vs_di, validar_factura_vs_di, validar_caratula_vs_docs, validar_caratula_totales, validar_dj_origen, validar_bultos_vs_bl, validar_documentos_declarados
+from utils.cruce_docs import validar_cm_vs_di, validar_factura_vs_di, validar_caratula_vs_docs, validar_caratula_totales, validar_dj_origen, validar_bultos_vs_bl, validar_documentos_declarados, validar_resumen_cm, validar_resumen_dj_origen
 from utils.reporte_pdf import generar_reporte_pdf
 
 st.set_page_config(page_title="Corrector FASA/FSM", page_icon="🔍", layout="wide")
@@ -258,19 +258,28 @@ if analizar:
 
         # ── 10. Cruces ────────────────────────────────────────────────────
         st.write("🔀 Cruzando datos...")
+        resultados_cm_vs_di = []
         if datos_cm:
-            todos_resultados.extend(validar_cm_vs_di(df_items, df_subitems, datos_cm))
+            resultados_cm_vs_di = validar_cm_vs_di(df_items, df_subitems, datos_cm)
+            todos_resultados.extend(resultados_cm_vs_di)
         if datos_facturas:
             todos_resultados.extend(validar_factura_vs_di(df_items, df_subitems, datos_facturas, df_ncm))
             todos_resultados.extend(validar_caratula_totales(caratula, datos_facturas, datos_forwarding))
         if datos_forwarding or datos_bl:
             todos_resultados.extend(validar_caratula_vs_docs(caratula, datos_forwarding, datos_bl, datos_facturas, config))
+        resultados_dj_origen = []
         if datos_dj:
-            todos_resultados.extend(validar_dj_origen(df_items, df_subitems, datos_dj))
+            resultados_dj_origen = validar_dj_origen(df_items, df_subitems, datos_dj)
+            todos_resultados.extend(resultados_dj_origen)
         if datos_bl and "error" not in datos_bl:
             todos_resultados.extend(validar_bultos_vs_bl(df_bultos, datos_bl))
         if df_caratula is not None and (datos_facturas or datos_forwarding):
             todos_resultados.extend(validar_documentos_declarados(df_caratula, datos_facturas, datos_forwarding))
+        # Resúmenes generales de CM y DJ: corren siempre que el DI declare
+        # algo en esos campos, aunque no se haya subido ningún documento
+        # (para poder informar el caso "declarado pero no subido").
+        todos_resultados.extend(validar_resumen_cm(df_items, datos_cm, resultados_cm_vs_di))
+        todos_resultados.extend(validar_resumen_dj_origen(df_items, datos_dj, resultados_dj_origen))
 
         status.update(label="✅ Análisis completado", state="complete")
 
