@@ -306,21 +306,31 @@ def generar_reporte_pdf(todos_resultados: list, config: dict, numero_di: str = "
             return (1, int(primero))
         return (0, primero)
 
+    # Campos informativos/declarativos de baja prioridad de lectura: van
+    # siempre al final de la sección (resto de los campos mantiene orden
+    # alfabético entre sí).
+    CAMPOS_BAJA_PRIORIDAD = {"I:DNRT-EXC-OPC", "I:AUTOPARTESEG-OPC", "I:DNRT-OPC"}
+
+    def _clave_campo(campo: str):
+        campo = str(campo)
+        return (1, campo) if campo in CAMPOS_BAJA_PRIORIDAD else (0, campo)
+
     # ─── ERRORES ──────────────────────────────────────────────────────────────
     # Ordenado por Campo y luego por Ítem (no solo por Ítem) para que las
     # observaciones de un mismo tipo (ej. todas las de LIQUIDACIÓN) queden
     # agrupadas y sean fáciles de ubicar sin tener que revisar fila por
-    # fila entre cientos de ítems.
+    # fila entre cientos de ítems. Los campos informativos de baja
+    # prioridad quedan al final.
     if errores:
         story.append(Paragraph("❌ Errores — Corrección obligatoria", estilo_seccion))
-        errores_ordenados = sorted(errores, key=lambda r: (str(r.get("campo", "")), _clave_item(r)))
+        errores_ordenados = sorted(errores, key=lambda r: (_clave_campo(r.get("campo", "")), _clave_item(r)))
         tabla_detalle(errores_ordenados, colors.HexColor("#FDECEA"), ROJO)
         story.append(Spacer(1, 10))
 
     # ─── ALERTAS ──────────────────────────────────────────────────────────────
     if alertas:
         story.append(Paragraph("⚠️ Alertas — Verificar antes de oficializar", estilo_seccion))
-        alertas_ordenadas = sorted(alertas, key=lambda r: (str(r.get("campo", "")), _clave_item(r)))
+        alertas_ordenadas = sorted(alertas, key=lambda r: (_clave_campo(r.get("campo", "")), _clave_item(r)))
         tabla_detalle(alertas_ordenadas, colors.HexColor("#FFF8E1"), NARANJA)
         story.append(Spacer(1, 10))
 
