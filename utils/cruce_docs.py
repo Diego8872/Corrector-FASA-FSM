@@ -143,7 +143,7 @@ def validar_cm_vs_di(df_items: pd.DataFrame, df_subitems: pd.DataFrame, datos_cm
                     resultados.append(ok(item_num, "CANTIDAD (CM)", f"Código: {modelo_di} | Cantidad OK: {cantidad_di} = {cantidad_cm}{suf_fac}"))
 
                 fob_cm = safe_float(item_cm.get("valor_total_fob", 0))
-                if abs(fob_di - fob_cm) > TOLERANCIA_FOB:
+                if round(fob_di, 2) != round(fob_cm, 2):
                     resultados.append(alerta(item_num, "MONTO FOB (CM)",
                         f"[CM: {numero_cm}] Código: {item_cm.get('codigo_parte','')} | "
                         f"FOB DI: {fob_di:.2f} — CM: {fob_cm:.2f} (dif: {abs(fob_di - fob_cm):.2f}){suf_fac}",
@@ -241,7 +241,7 @@ def validar_factura_vs_di(
                     ))
 
                 # Validación FOB
-                if abs(fob_di - fob_esperado) > TOLERANCIA_FOB:
+                if round(fob_di, 2) != round(fob_esperado, 2):
                     resultados.append(alerta(
                         item_num, "MONTO FOB (FACTURA)",
                         f"FOB DI: {fob_di:.2f} — FOB factura: {fob_esperado:.2f} "
@@ -323,7 +323,7 @@ def validar_caratula_totales(caratula: dict, datos_facturas: dict, datos_forward
         fob_total_facturas = round(sum(safe_float(f.get("total_factura", 0)) for f in facturas_validas.values()), 2)
         fob_di = safe_float(_buscar_caratula(caratula, "FOB") or 0)
 
-        if abs(fob_di - fob_total_facturas) > TOLERANCIA_FOB:
+        if round(fob_di, 2) != fob_total_facturas:
             resultados.append(al("FOB", f"DI: {fob_di:.2f} — Suma de facturas: {fob_total_facturas:.2f} "
                                           f"(dif: {abs(fob_di - fob_total_facturas):.2f})", "ERROR"))
         else:
@@ -412,12 +412,12 @@ def validar_caratula_vs_docs(caratula: dict, datos_forwarding: dict, datos_bl: d
         flete_di   = safe_float(_buscar_caratula(caratula, "FLETE") or 0)
         seguro_di  = safe_float(_buscar_caratula(caratula, "SEGURO") or 0)
 
-        if abs(flete_di - flete_doc) > TOLERANCIA_FOB:
+        if round(flete_di, 2) != round(safe_float(flete_doc), 2):
             resultados.append(al("FLETE", f"DI: {flete_di:.2f} — Forwarding: {flete_doc:.2f}", "ERROR"))
         else:
             resultados.append(ok_("FLETE", f"Flete correcto: {flete_di:.2f}"))
 
-        if abs(seguro_di - seguro_doc) > TOLERANCIA_FOB:
+        if round(seguro_di, 2) != round(safe_float(seguro_doc), 2):
             resultados.append(al("SEGURO", f"DI: {seguro_di:.2f} — Forwarding: {seguro_doc:.2f}", "ERROR"))
         else:
             resultados.append(ok_("SEGURO", f"Seguro correcto: {seguro_di:.2f}"))
