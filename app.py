@@ -420,6 +420,25 @@ if "resultados" in st.session_state:
             },
         )
 
+    def _clave_item(r):
+        # Mismo criterio usado al guardar los resultados: GENERAL al
+        # principio, ítems numéricos ordenados como número.
+        item = str(r.get("item", ""))
+        primero = item.split(",")[0].strip()
+        if primero.isdigit():
+            return (1, int(primero))
+        return (0, primero)
+
+    def mostrar_por_campo(lista):
+        # Para Errores/Alertas: agrupa primero por Campo (para encontrar
+        # rápido todas las observaciones de un mismo tipo, ej. todas las
+        # de LIQUIDACIÓN juntas) y, dentro de cada campo, ordena por Ítem.
+        if not lista:
+            st.info("Sin resultados.")
+            return
+        lista_ordenada = sorted(lista, key=lambda r: (str(r.get("campo", "")), _clave_item(r)))
+        mostrar(lista_ordenada)
+
     def mostrar_revision_general():
         # 1) Filas de resumen (CM/DJ/Ítems agrupados): ya vienen con su
         #    propio texto, se muestran tal cual, en todos sus niveles.
@@ -449,8 +468,8 @@ if "resultados" in st.session_state:
         mostrar(filas)
 
     with tabs[0]: mostrar_revision_general()
-    with tabs[1]: mostrar(errores)
-    with tabs[2]: mostrar(alertas_list)
+    with tabs[1]: mostrar_por_campo(errores)
+    with tabs[2]: mostrar_por_campo(alertas_list)
     with tabs[3]: mostrar(oks)
     with tabs[4]: mostrar(todos_resultados)
 
