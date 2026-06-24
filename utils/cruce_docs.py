@@ -18,6 +18,15 @@ def _cargar_codigos_clasificacion(df_clasi: pd.DataFrame) -> set:
     Extrae el set de códigos de parte canónicos del Excel de clasificaciones.
     La columna PART_NUMBER ya trae el código sin guión y sin sufijo de origen.
     Ej: '1K6853', '5417108', '6F8146'
+
+    Códigos puramente numéricos: cuando Excel interpreta la columna como
+    número (no texto), pierde los ceros de relleno a la izquierda — ej.
+    '0054173' queda guardado como '54173' (o '54173.0' si además le
+    agrega decimales). El código completo de CAT siempre tiene 7 dígitos
+    cuando es numérico puro, así que se reconstruye rellenando con ceros
+    hasta esa longitud antes de comparar. Los códigos alfanuméricos
+    (ej. '0S0509') no se tocan, porque Excel no puede convertirlos a
+    número y por lo tanto no pierden el cero.
     """
     if df_clasi is None or df_clasi.empty:
         return set()
@@ -28,7 +37,16 @@ def _cargar_codigos_clasificacion(df_clasi: pd.DataFrame) -> set:
             break
     if col is None:
         return set()
-    return set(df_clasi[col].astype(str).str.strip().str.upper())
+
+    codigos = set()
+    for val in df_clasi[col].astype(str).str.strip().str.upper():
+        # Quitar el ".0" que pandas agrega si Excel guardó la celda como
+        # número de punto flotante (ej. "54173.0" -> "54173").
+        v = re.sub(r"\.0$", "", val)
+        if v.isdigit() and len(v) < 7:
+            v = v.zfill(7)
+        codigos.add(v)
+    return codigos
 
 
 def _validar_codigo_en_clasificacion(codigo: str, codigos_clasi: set, item_num: str, nro_factura: str) -> list:
