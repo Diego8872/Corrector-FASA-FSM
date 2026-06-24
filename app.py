@@ -513,12 +513,25 @@ if "resultados" in st.session_state:
     with tabs[0]: mostrar_revision_general()
     with tabs[1]: mostrar_por_campo(errores)
     with tabs[2]: mostrar_por_campo(alertas_list)
-    with tabs[3]: mostrar(oks)
+    with tabs[3]:
+        st.success(f"✅ {len(oks)} validación(es) por ítem superadas correctamente. "
+                   f"El detalle agrupado ya está en la pestaña 'Revisión General'.")
+        with st.expander(f"Ver detalle completo de OK ({len(oks)} filas)", expanded=False):
+            mostrar(oks)
     with tabs[4]: mostrar(todos_resultados)
 
 
     # ─── EXPORT ───────────────────────────────────────────────────────────────
     st.subheader("📥 Exportar reporte")
+
+    incluir_detalle_ok = st.checkbox(
+        "Incluir detalle completo de Validaciones correctas en el PDF",
+        value=False,
+        help="Por defecto el PDF muestra el resumen agrupado (Revisión General) y el detalle "
+             "completo de Errores/Alertas, sin el detalle fila por fila de cada ítem OK. "
+             "Marcá esto si querés revisar casos puntuales que dieron OK."
+    )
+
     col_pdf, col_xlsx = st.columns(2)
 
     referencia_actual = st.session_state.get("referencia", "").strip()
@@ -530,7 +543,8 @@ if "resultados" in st.session_state:
 
     with col_pdf:
         try:
-            pdf_bytes = generar_reporte_pdf(todos_resultados, config_actual, numero_di=numero_di_actual, docs_procesados=docs_procesados)
+            pdf_bytes = generar_reporte_pdf(todos_resultados, config_actual, numero_di=numero_di_actual,
+                docs_procesados=docs_procesados, incluir_detalle_ok=incluir_detalle_ok)
             st.download_button("📄 Descargar reporte PDF",
                 data=pdf_bytes,
                 file_name=f"reporte_corrector_FSM{sufijo_archivo}.pdf",
