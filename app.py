@@ -6,7 +6,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from config.defaults import EMPRESAS, DESPACHANTE, CUIT_DESPACHANTE, REGIMENES, ADUANAS
 from utils.parser_di import leer_di, safe_float
-from utils.validaciones import validar_items, validar_subitems, validar_liquidacion, validar_prorrateo, validar_ncm_excel, validar_resumen_liquidacion
+from utils.validaciones import validar_items, validar_subitems, validar_liquidacion, validar_prorrateo, validar_ncm_excel, validar_resumen_liquidacion, validar_dumping_marca_dj, validar_items_usados
 from utils.extractor_api import extraer_forwarding, extraer_bl, extraer_cm, extraer_dj_origen, extraer_numero_re_de_ce
 from utils.parser_factura_cat import extraer_factura_cat
 from utils.cruce_docs import validar_cm_vs_di, validar_factura_vs_di, validar_caratula_vs_docs, validar_caratula_totales, validar_dj_origen, validar_bultos_vs_bl, validar_documentos_declarados, validar_resumen_cm, validar_resumen_dj_origen, validar_resumen_items
@@ -291,10 +291,19 @@ if analizar:
         todos_resultados.extend(validar_items(df_items, df_subitems, df_caratula, datos_cm, datos_facturas))
         todos_resultados.extend(validar_subitems(df_subitems, df_items, df_caratula, datos_cm, datos_facturas))
         todos_resultados.extend(validar_prorrateo(df_items, fob_total, flete_total_di, seguro_total_di, df_subitems, df_caratula, datos_cm, datos_facturas))
+        # Ítems usados: identificación con código/factura para revisión
+        # puntual (ej. confirmar CORE DEPOSIT contemplado en el FOB).
+        # No depende de la liquidación, corre siempre.
+        todos_resultados.extend(validar_items_usados(df_items, df_subitems, df_caratula, datos_cm, datos_facturas))
         if not df_liq.empty:
             resultados_liquidacion = validar_liquidacion(df_liq, df_items, df_subitems, df_caratula, datos_cm, datos_facturas)
             todos_resultados.extend(resultados_liquidacion)
             todos_resultados.extend(validar_resumen_liquidacion(resultados_liquidacion, len(df_items)))
+            # Dumping: consistencia entre marca (CATERPILLAR/CUMMINS/DEUTZ
+            # exceptúan el pago), DJ de Origen No Preferencial (exime del
+            # pago si está declarada) y lo efectivamente liquidado. Corre
+            # junto a Liquidación porque necesita la misma solapa (df_liq).
+            todos_resultados.extend(validar_dumping_marca_dj(df_items, df_subitems, df_liq, df_caratula, datos_cm, datos_facturas))
         if df_ncm is not None:
             todos_resultados.extend(validar_ncm_excel(df_subitems, df_ncm, df_items, df_caratula, datos_cm, datos_facturas))
         st.write(f"   ✅ {len(todos_resultados)} resultados")
