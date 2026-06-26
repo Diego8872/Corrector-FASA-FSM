@@ -1,283 +1,325 @@
 """
-Parser PyMuPDF + regex para Forwarding Invoice CAT.
-Sin API — extracción local gratuita.
+Parser PyMuPDF + regex para CMs (CE + RE) de Inversiones Mineras (Ley 24.196)
+Sin uso de API — extracción local gratuita.
 
-Soporta 2 formatos distintos de proveedor, detectados automáticamente:
-  - DHL: texto lineal, etiqueta seguida de su valor en la línea siguiente
-    (ej. "Invoice No" / "ZQFLI261200"). Layout de texto plano simple.
-  - DB Schenker: layout de tabla/formulario — las etiquetas de
-    encabezado salen todas juntas primero (SAILING DATE, E.T.A., ...) y
-    sus valores salen en otro bloque más abajo, en el mismo orden
-    relativo, no en líneas consecutivas a la etiqueta.
+CE (Certificado de Autorización de Importación):
+  - Número CE: línea "CE-2026-XXXXXXXX-APN-DIMI#MEC"
+  - Número RE: en el cuerpo "RE-2026-XXXXXXXX-APN-DGDA#MEC"
+  - Fecha: línea con formato "Martes 26 de Mayo de 2026"
+  - Empresa y CUIT: en el cuerpo del texto
+
+RE (Solicitud de Importación Actividad Minera):
+  - Número RE: línea "RE-2026-XXXXXXXX-APN-DGDA#MEC"
+  - FOB total: "Valor FOB TOTAL ... : 27655,12"
+  - Número de factura: "Número de Factura: Z95046356"
+  - Ítems: bloques repetitivos con campos etiquetados
+    Separador de bloque: "Posible cantidad de repetidores (máximo 30)"
+    Campos: Descripción, Cantidad, Unidad de Medida, NCM, Valor unitario FOB,
+            Valor total FOB, Código de parte, Marca, Modelo de la maquina
+
+Caso especial: mismo código de parte repetido con mismo NCM y mismo FOB
+→ se consolidan sumando cantidad y valor_total
 """
-import re
-import fitz
 
-def _n(s):
+import re
+import fitz  # PyMuPDF
+
+
+# ── Utilidades ────────────────────────────────────────────────────────────────
+
+def _n(s: str) -> float:
+    """'27655,12' o '27655.12' → 27655.12"""
     try:
-        return float(re.sub(r"[^\d.]", "", s.strip()))
-    except:
+        return float(s.strip().replace(".", "").replace(",", "."))
+    except Exception:
         return 0.0
 
+def _limpiar(s: str) -> str:
+    return s.strip().rstrip(" \xa0")
 
-def _detectar_moneda(lineas: list) -> str:
-    """
-    Detecta la moneda real del Forwarding Invoice buscando códigos conocidos
-    en el texto (columna VAT CUR de cada línea, o 'Insured Value: ... USD').
-    Fallback a USD si no se encuentra ninguno explícito.
-    """
-    texto = "\n".join(lineas).upper()
-    for codigo in ("USD", "EUR", "ARS"):
-        if re.search(rf"\b{codigo}\b", texto):
-            return codigo
-    return "USD"
+def _extraer_valor(linea: str, prefijo: str) -> str:
+    """Extrae valor después de 'Prefijo: valor'"""
+    if prefijo in linea:
+        return _limpiar(linea.split(prefijo, 1)[1].lstrip(": "))
+    return ""
 
 
-def _resultado_base(moneda_detectada: str) -> dict:
+# ── Regex ─────────────────────────────────────────────────────────────────────
+
+RE_NUM_CE   = re.compile(r"CE-\d{4}-\d+-APN-DIMI#MEC")
+RE_NUM_RE   = re.compile(r"RE-\d{4}-\d+-APN-DGDA#MEC")
+RE_FECHA_CE = re.compile(r"(Lunes|Martes|Miércoles|Jueves|Viernes|Sábado|Domingo)\s+\d{1,2}\s+de\s+\w+\s+de\s+\d{4}")
+RE_CUIT     = re.compile(r"CUIT\s+N[°º]\s*([\d\-]+)")
+RE_FOB_TOT  = re.compile(r"Certificado\):\s*([\d\.,]+)")
+RE_NCM      = re.compile(r"Posición Arancelaria - NCM - Seleccionar uno:\s*([\d\.]+)")
+RE_SEPARADOR = re.compile(r"Posible cantidad de repetidores")
+
+
+# ── Parser CE ─────────────────────────────────────────────────────────────────
+
+def _parsear_ce(pdf_bytes: bytes) -> dict:
+    doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+    texto = "\n".join(page.get_text() for page in doc)
+    doc.close()
+
+    numero_ce = ""
+    numero_re = ""
+    fecha = ""
+    empresa = "FINNING SOLUCIONES MINERAS S.A."
+    cuit = ""
+
+    m = RE_NUM_CE.search(texto)
+    if m:
+        numero_ce = m.group(0)
+
+    m = RE_NUM_RE.search(texto)
+    if m:
+        numero_re = m.group(0)
+
+    m = RE_FECHA_CE.search(texto)
+    if m:
+        fecha = m.group(0)
+
+    # CUIT puede estar partido en dos líneas; buscar en texto unificado
+    texto_unif = " ".join(texto.split())
+    m = re.search(r"CUIT N[°º]?\s*(\d{2}-\d+-\d)", texto_unif)
+    if m:
+        cuit = m.group(1)
+
     return {
-        "numero_invoice":        "",
-        "fecha":                 "",
-        "bl_number":             "",
-        "incoterm":              "CIF",
-        "flete_total":           0.0,
-        "detalle_flete":         [],
-        "seguro_marine_premium": 0.0,
-        "seguro_war_premium":    0.0,
-        "seguro_otros":          [],
-        "seguro_total":          0.0,
-        "otros_cargos":          [],
-        "total_invoice_dealer":  0.0,
-        "moneda":                moneda_detectada,
-        "moneda_flete":          moneda_detectada,
-        "moneda_seguro":         moneda_detectada,
-        "alertas":               [],
+        "numero_ce": numero_ce,
+        "numero_re": numero_re,
+        "fecha_emision": fecha,
+        "empresa": empresa,
+        "cuit": cuit,
+        "validez_dias": 180,
     }
 
 
-# ── Formato DHL: texto lineal, etiqueta + valor en línea siguiente ───────────
+# ── Parser RE ─────────────────────────────────────────────────────────────────
 
-def _extraer_forwarding_dhl(lineas: list, moneda_detectada: str) -> dict:
-    resultado = _resultado_base(moneda_detectada)
-
-    SKIP = {"DESCRIPTION", "AMOUNT", "VAT", "CUR", "Remarks:", "USD", "USD "}
-
-    for i, linea in enumerate(lineas):
-        s = linea.strip()
-        if not s:
-            continue
-
-        # ── Campos de encabezado ──
-        if s == "Invoice No" and i+1 < len(lineas):
-            resultado["numero_invoice"] = lineas[i+1].strip()
-        elif s == "Date" and i+1 < len(lineas):
-            resultado["fecha"] = lineas[i+1].strip()
-        elif s == "Bill of Lading Number" and i+1 < len(lineas):
-            resultado["bl_number"] = lineas[i+1].strip()
-
-        # ── Flete total ──
-        elif s.startswith("Total Charge to Caterpillar"):
-            # Puede estar en misma línea o en la siguiente
-            m = re.search(r"([\d,]+\.\d{2})", s)
-            if m:
-                resultado["flete_total"] = _n(m.group(1))
-            elif i+1 < len(lineas):
-                resultado["flete_total"] = _n(lineas[i+1])
-
-        # ── Seguros ──
-        elif s == "Marine Premium" and i+1 < len(lineas):
-            resultado["seguro_marine_premium"] = _n(lineas[i+1])
-        elif s == "War Premium" and i+1 < len(lineas):
-            resultado["seguro_war_premium"] = _n(lineas[i+1])
-
-        # ── Total dealer ──
-        elif s.startswith("Total Invoice to Dealer"):
-            m = re.search(r"([\d,]+\.\d{2})", s)
-            if m:
-                resultado["total_invoice_dealer"] = _n(m.group(1))
-
-        # ── Alertas ──
-        elif s == "Finance Charges to Dealer" and i+1 < len(lineas):
-            v = _n(lineas[i+1])
-            if v > 0:
-                resultado["alertas"].append(f"Finance Charges to Dealer: USD {v:.2f}")
-        elif s == "Other Charges" and i+1 < len(lineas):
-            v = _n(lineas[i+1])
-            if v > 0:
-                resultado["alertas"].append(f"Other Charges: USD {v:.2f}")
-
-    # ── Detalle flete: entre DESCRIPTION y Total Charge ──
-    # Formato: línea de concepto (con monto embebido "Base Rate USD X.XX")
-    # seguida de línea con solo el monto
-    en_detalle = False
-    i = 0
-    while i < len(lineas):
-        s = lineas[i].strip()
-        if s == "DESCRIPTION":
-            en_detalle = True
-            i += 1
-            continue
-        if s.startswith("Total Charge to Caterpillar"):
-            en_detalle = False
-        if en_detalle and s and s not in SKIP:
-            # Es una línea de concepto si la siguiente es solo un número
-            siguiente = lineas[i+1].strip() if i+1 < len(lineas) else ""
-            if re.fullmatch(r"[\d,]+\.\d{2}", siguiente):
-                resultado["detalle_flete"].append({
-                    "concepto": s,
-                    "monto": _n(siguiente)
-                })
-                i += 2
-                continue
-        i += 1
-
-    resultado["seguro_total"] = (
-        resultado["seguro_marine_premium"] + resultado["seguro_war_premium"]
-    )
-
-    return resultado
-
-
-# ── Formato DB Schenker: layout de tabla/formulario ───────────────────────────
-#
-# Las etiquetas de encabezado (SAILING DATE, E.T.A., PLACE OF ACCEPTANCE,
-# OUR REFERENCE (STT NUMBER), ACCOUNT NUMBER, Vessel/Voyage No., PORT OF
-# LOADING, BILL OF LANDING No., INVOICE NUMBER, ...) salen todas juntas
-# primero en el texto extraído; sus valores aparecen en otro bloque más
-# abajo, en el mismo orden relativo de aparición. Por eso no se puede usar
-# "etiqueta seguida de su valor" — hay que ubicar el dato por su formato
-# característico (regex) en vez de por posición relativa a la etiqueta.
-# La descripción (cargos) sí aparece en formato lineal normal:
-# "CONCEPTO [%] MONEDA MONTO".
-
-RE_MONTO_2DEC = re.compile(r"^[\d,]+\.\d{2}$")
-
-
-def _extraer_forwarding_db_schenker(lineas: list, moneda_detectada: str) -> dict:
-    resultado = _resultado_base(moneda_detectada)
-
-    texto_completo = "\n".join(lineas)
-
-    # ── Número de invoice: identificado por su formato típico
-    # (letras+dígitos, ej. ZQFZP305993, ZQFLI261200) — más confiable que
-    # depender del orden de bloques de la tabla. ──
-    m = re.search(r"\b([A-Z]{2,5}\d{5,9})\b", texto_completo)
-    if m:
-        resultado["numero_invoice"] = m.group(1)
-
-    # ── BL number: patrón típico de solo dígitos, 6-9 caracteres. En el
-    # bloque de valores del encabezado, el BL number aparece en la línea
-    # inmediatamente anterior al numero_invoice (ej. "721469023" seguido
-    # de "ZQFZP305993") — se busca relativo a esa posición en vez de a
-    # "antes de DESCRIPTION", porque el bloque de valores puede estar
-    # ubicado en cualquier parte del documento según el proveedor. ──
-    if resultado["numero_invoice"]:
-        idx_invoice = next((i for i, l in enumerate(lineas) if l.strip() == resultado["numero_invoice"]), None)
-        if idx_invoice is not None:
-            for j in range(max(0, idx_invoice - 3), idx_invoice):
-                s = lineas[j].strip()
-                if re.fullmatch(r"\d{6,9}", s):
-                    resultado["bl_number"] = s
-                    break
-
-    # ── Fecha: formato DD/MM/YY suelto en el texto ──
-    m_fecha = re.search(r"\b(\d{2}/\d{2}/\d{2})\b", texto_completo)
-    if m_fecha:
-        resultado["fecha"] = m_fecha.group(1)
-
-    # ── Cargos de flete: líneas "CONCEPTO [PORCENTAJE%] MONEDA MONTO"
-    # Ej: "DB SCHENKER HANDLING AND PROCESSING" / "USD" / "175.00"
-    #     "DISBURSEMENT FEE" / "2.50%" / "USD" / "58.15"
-    # Se acumulan todos los conceptos hasta "TOTAL CHARGES TO CATERPILLAR".
-    i = 0
-    en_detalle = False
-    while i < len(lineas):
-        s = lineas[i].strip()
-        if s == "DESCRIPTION":
-            en_detalle = True
-            i += 1
-            continue
-        if s.startswith("TOTAL CHARGES TO CATERPILLAR"):
-            en_detalle = False
-            m_tot = re.search(r"([\d,]+\.\d{2})", s)
-            if m_tot:
-                resultado["flete_total"] = _n(m_tot.group(1))
-            else:
-                for j in range(i+1, min(i+4, len(lineas))):
-                    if RE_MONTO_2DEC.match(lineas[j].strip()):
-                        resultado["flete_total"] = _n(lineas[j])
-                        break
-            i += 1
-            continue
-        if en_detalle and s and s not in ("CURRENCY", "AMOUNT", moneda_detectada):
-            es_monto = bool(RE_MONTO_2DEC.match(s))
-            es_porcentaje = bool(re.fullmatch(r"[\d.]+%", s))
-            if not es_monto and not es_porcentaje:
-                for j in range(i+1, min(i+4, len(lineas))):
-                    candidato = lineas[j].strip()
-                    if RE_MONTO_2DEC.match(candidato):
-                        resultado["detalle_flete"].append({
-                            "concepto": s,
-                            "monto": _n(candidato)
-                        })
-                        break
-                    if not re.fullmatch(r"[\d.]+%", candidato) and candidato not in ("CURRENCY", "AMOUNT", moneda_detectada):
-                        break
-        i += 1
-
-    # ── Seguro: "INSURANCE PREMIUM" seguido de porcentaje, moneda y monto ──
-    for i, linea in enumerate(lineas):
-        s = linea.strip()
-        if s == "INSURANCE PREMIUM":
-            for j in range(i+1, min(i+4, len(lineas))):
-                candidato = lineas[j].strip()
-                if RE_MONTO_2DEC.match(candidato):
-                    resultado["seguro_marine_premium"] = _n(candidato)
-                    break
-            break
-
-    # ── Total a dealer ──
-    for i, linea in enumerate(lineas):
-        s = linea.strip()
-        if s.startswith("TOTAL INVOICE TO DEALER"):
-            for j in range(i+1, min(i+4, len(lineas))):
-                candidato = lineas[j].strip()
-                if RE_MONTO_2DEC.match(candidato):
-                    resultado["total_invoice_dealer"] = _n(candidato)
-                    break
-            break
-
-    resultado["seguro_total"] = (
-        resultado["seguro_marine_premium"] + resultado["seguro_war_premium"]
-    )
-
-    return resultado
-
-
-# ── Router: detecta el formato y delega a la función correspondiente ─────────
-
-def extraer_forwarding(pdf_bytes: bytes) -> dict:
+def _parsear_re(pdf_bytes: bytes) -> dict:
     doc = fitz.open(stream=pdf_bytes, filetype="pdf")
-    lineas = [l for page in doc for l in page.get_text().splitlines()]
+    # Concatenar todo el texto
+    lineas = []
+    for page in doc:
+        lineas.extend(page.get_text().splitlines())
     doc.close()
 
-    moneda_detectada = _detectar_moneda(lineas)
-    texto_completo = "\n".join(lineas).upper()
+    numero_re = ""
+    fob_total = 0.0
+    numero_factura = ""
+    items_raw = []
 
-    # DB Schenker se identifica por su frase distintiva de pie de página
-    # o por usar "TOTAL CHARGES TO CATERPILLAR" (con "S"), distinto del
-    # "Total Charge to Caterpillar" (sin "S") del formato DHL.
-    es_db_schenker = (
-        "DB SCHENKER" in texto_completo
-        or "TOTAL CHARGES TO CATERPILLAR" in texto_completo
-    )
+    # ── Datos generales ──
+    for linea in lineas:
+        l = linea.strip()
+        if not numero_re:
+            m = RE_NUM_RE.search(l)
+            if m:
+                numero_re = m.group(0)
+        if not fob_total:
+            m = RE_FOB_TOT.search(l)
+            if m:
+                fob_total = _n(m.group(1))
+        if not numero_factura and "Número de Factura:" in l:
+            numero_factura = _limpiar(l.split("Número de Factura:", 1)[1])
 
-    if es_db_schenker:
-        return _extraer_forwarding_db_schenker(lineas, moneda_detectada)
-    return _extraer_forwarding_dhl(lineas, moneda_detectada)
+    # ── Parsear ítems por bloques ──
+    # Separador: "Posible cantidad de repetidores (máximo 30)"
+    # Cada bloque contiene los campos de un ítem
+    bloques = _dividir_bloques(lineas)
 
+    for bloque in bloques:
+        item = _parsear_bloque(bloque)
+        if item:
+            items_raw.append(item)
+
+    items = _consolidar_re(items_raw)
+
+    return {
+        "numero_re":      numero_re,
+        "numero_factura": numero_factura,
+        "fob_total":      fob_total,
+        "items":          items,
+    }
+
+
+def _dividir_bloques(lineas: list) -> list:
+    """Divide las líneas en bloques usando el separador de ítem."""
+    bloques = []
+    bloque_actual = []
+    en_items = False
+
+    for linea in lineas:
+        l = linea.strip()
+        if RE_SEPARADOR.search(l):
+            if bloque_actual:
+                bloques.append(bloque_actual)
+            bloque_actual = []
+            en_items = True
+            continue
+        if en_items:
+            bloque_actual.append(l)
+
+    if bloque_actual:
+        bloques.append(bloque_actual)
+
+    return bloques
+
+
+def _parsear_bloque(lineas: list) -> dict | None:
+    """Extrae los campos de un bloque de ítem."""
+    campos = {
+        "descripcion":        "",
+        "cantidad":           0.0,
+        "unidad":             "",
+        "ncm":                "",
+        "ncm_8_digitos":      "",
+        "valor_unitario_fob": 0.0,
+        "valor_total_fob":    0.0,
+        "codigo_parte":       "",
+        "marca":              "CATERPILLAR",
+        "origen":             "",
+    }
+
+    i = 0
+    while i < len(lineas):
+        l = lineas[i]
+
+        if "Descripción detallada del bien" in l:
+            campos["descripcion"] = _limpiar(l.split("insumo:", 1)[-1]) if "insumo:" in l else ""
+        elif l.startswith("Cantidad:"):
+            campos["cantidad"] = _n(l.split(":", 1)[1])
+        elif "Unidad de Medida:" in l:
+            unidad = _limpiar(l.split(":", 1)[1])
+            if "Otras" in unidad and i+1 < len(lineas) and "Especificar:" in lineas[i+1]:
+                unidad = _limpiar(lineas[i+1].split(":", 1)[1])
+            campos["unidad"] = unidad
+        elif "Posición Arancelaria - NCM" in l:
+            m = RE_NCM.search(l)
+            if m:
+                ncm_raw = m.group(1).replace(".", "")
+                campos["ncm"] = m.group(1)
+                campos["ncm_8_digitos"] = ncm_raw[:8]
+        elif "Valor unitario/por unidad" in l:
+            campos["valor_unitario_fob"] = _n(l.split(":")[-1])
+        elif "Valor total de los artículo" in l:
+            campos["valor_total_fob"] = _n(l.split(":")[-1])
+        elif 'Código de parte' in l:
+            val = _limpiar(l.split(")")[-1].lstrip(": ")) if ")" in l else _limpiar(l.split(":")[-1])
+            if val.upper() != "NO POSEE":
+                campos["codigo_parte"] = val
+        elif "Número de Factura:" in l:
+            pass  # ya procesado a nivel general
+        elif "Clasificación de artículo:" in l:
+            pass
+
+        i += 1
+
+    # Ignorar bloques vacíos o sin código de parte y sin NCM
+    if not campos["ncm"] and not campos["codigo_parte"]:
+        return None
+
+    return campos
+
+
+def _consolidar_re(items_raw: list) -> list:
+    """
+    NO consolida — preserva cada entrada del RE como ítem separado.
+    El mismo código puede aparecer varias veces con distintas cantidades/valores
+    porque corresponde a distintos ítems del DI.
+    Solo elimina duplicados exactos (mismo código + misma cantidad + mismo valor_total).
+    """
+    vistos = set()
+    resultado = []
+
+    for item in items_raw:
+        key = (
+            item["codigo_parte"].upper(),
+            item["ncm_8_digitos"],
+            item["cantidad"],
+            item["valor_total_fob"],
+        )
+        if key not in vistos:
+            vistos.add(key)
+            resultado.append(item.copy())
+
+    for idx, it in enumerate(resultado, 1):
+        it["numero_item"] = idx
+
+    return resultado
+
+
+# ── Parser CM completo (CE + RE) ──────────────────────────────────────────────
+
+def extraer_cm(pdf_ce_bytes: bytes, pdf_re_bytes: bytes) -> dict:
+    """
+    Reemplaza extraer_cm() de extractor_api.py.
+    Retorna dict compatible con el formato anterior.
+    """
+    ce = _parsear_ce(pdf_ce_bytes)
+    re_ = _parsear_re(pdf_re_bytes)
+
+    # Mapear ítems al formato esperado por cruce_docs.py
+    items_mapeados = []
+    for it in re_["items"]:
+        items_mapeados.append({
+            "numero_item":       it.get("numero_item", 0),
+            "ncm":               it["ncm"],
+            "ncm_8_digitos":     it["ncm_8_digitos"],
+            "descripcion":       it["descripcion"],
+            "codigo_parte":      it["codigo_parte"],
+            "cantidad":          it["cantidad"],
+            "unidad":            it["unidad"],
+            "valor_unitario_fob": it["valor_unitario_fob"],
+            "valor_total_fob":   it["valor_total_fob"],
+            "marca":             it.get("marca", "CATERPILLAR"),
+            "origen":            it.get("origen", ""),
+        })
+
+    return {
+        "numero_ce":     ce["numero_ce"],
+        "numero_re":     ce["numero_re"] or re_["numero_re"],
+        "empresa":       ce["empresa"],
+        "cuit":          ce["cuit"],
+        "fecha_emision": ce["fecha_emision"],
+        "validez_dias":  180,
+        "numero_factura": re_["numero_factura"],
+        "fob_total":     re_["fob_total"],
+        "items":         items_mapeados,
+    }
+
+
+# ── Test CLI ──────────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
-    import sys, json
-    with open(sys.argv[1], "rb") as f:
-        data = extraer_forwarding(f.read())
-    print(json.dumps(data, indent=2, ensure_ascii=False))
+    import sys
+
+    ce_path = sys.argv[1]
+    re_path = sys.argv[2]
+
+    with open(ce_path, "rb") as f:
+        ce_bytes = f.read()
+    with open(re_path, "rb") as f:
+        re_bytes = f.read()
+
+    data = extraer_cm(ce_bytes, re_bytes)
+
+    print(f"\n=== CM ===")
+    print(f"CE:      {data['numero_ce']}")
+    print(f"RE:      {data['numero_re']}")
+    print(f"Empresa: {data['empresa']} | CUIT: {data['cuit']}")
+    print(f"Fecha:   {data['fecha_emision']}")
+    print(f"Factura: {data['numero_factura']} | FOB Total: USD {data['fob_total']:,.2f}")
+    print(f"Ítems:   {len(data['items'])}\n")
+    for it in data["items"]:
+        print(
+            f"  [{it.get('numero_item','-'):2}] {it['codigo_parte']:<12} "
+            f"NCM:{it['ncm']:<12} "
+            f"Qty:{it['cantidad']:>8,.0f}  "
+            f"U:{it['valor_unitario_fob']:>10,.2f}  "
+            f"Tot:{it['valor_total_fob']:>12,.2f}"
+        )
+    print(f"\nSuma ítems: USD {sum(i['valor_total_fob'] for i in data['items']):,.2f}")
+    print(f"FOB total:  USD {data['fob_total']:,.2f}")
