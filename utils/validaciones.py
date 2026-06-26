@@ -596,112 +596,160 @@ def validar_resumen_liquidacion(resultados_liquidacion: list, total_items: int) 
     }]
 
 
-# ── Validación Dumping: consistencia marca/DJ vs liquidación ──────────────────
+# ── Validación Dumping: 5 escenarios (NCM/marca, DJ, origen/procedencia) ──────
 
 MARCAS_EXCEPTUADAS_DUMPING = ["CATERPILLAR", "CUMMINS", "DEUTZ"]
+NCM_EXCEPTUADA_DUMPING = "84133090100H"  # 8413.30.90.100H sin puntos
 
 
 def validar_dumping_marca_dj(df_items: pd.DataFrame, df_subitems: pd.DataFrame, df_liq: pd.DataFrame,
                               df_caratula: pd.DataFrame = None, datos_cm: dict = None,
                               datos_facturas: dict = None) -> list:
     """
-    Verifica que la presencia/ausencia de dumping en la liquidación de
-    cada ítem sea consistente con su situación de marca y DJ de Origen
-    No Preferencial:
+    Verifica, para cada ítem que lleva dumping (algún campo de
+    I:DUMPR60DECJUR / I:DUMPR60PAISMAYOR / I:DUMPADVALPAISTXT con
+    información), si corresponde o no pagarlo, y si eso es consistente
+    con lo efectivamente liquidado. 5 escenarios:
 
-      - Marca CATERPILLAR/CUMMINS/DEUTZ -> NO corresponde pagar dumping
-        (marca exceptuada), sin importar si tiene DJ o no.
-      - Marca distinta + D:DJ-ORIG-NOPREFER declarada (no vacía) -> NO
-        corresponde pagar (la DJ exime del dumping).
-      - Marca distinta + sin DJ -> SÍ corresponde pagar.
+      1. NCM 8413.30.90.100H + marca CATERPILLAR/CUMMINS/DEUTZ
+         -> NO paga (firme). Si el concepto de dumping SÍ está en la
+            liquidación -> ERROR (se liquidó algo que no correspondía).
+      2. Origen = Procedencia + DJ de Origen No Preferencial declarada
+         -> NO paga (firme). Si SÍ está liquidado -> ERROR.
+      3. Origen = Procedencia + SIN DJ
+         -> no se puede determinar con certeza. Si NO está liquidado
+            -> ALERTA (verificar si corresponde el pago).
+      4. Origen ≠ Procedencia, sin la excepción de marca/NCM del caso 1
+         -> paga (firme). Si NO está liquidado -> ERROR (falta liquidar).
+      5. DJ declarada pero Origen ≠ Procedencia
+         -> ERROR por sí mismo (la DJ está mal aplicada); no se evalúa
+            si corresponde o no el pago en este caso.
 
-    Si el ítem efectivamente tiene un concepto de dumping en su
-    liquidación (detectado por las mismas palabras clave que usa
-    validar_liquidacion) y esto contradice lo que correspondería según
-    su situación, se informa como ALERTA — por ítem y a la vez en un
-    resumen exclusivo de Revisión General.
+    El ítem solo entra a este análisis si lleva dumping (paso 1). Si no
+    lleva dumping, no genera ninguna fila.
 
-    No determina si el escenario es 100% correcto en términos legales
-    (eso requiere juicio del despachante); solo señala inconsistencias
-    entre lo declarado (marca, DJ) y lo liquidado (dumping sí/no), para
-    que se revisen los casos que no calzan.
+    Genera detalle por ítem (con código/factura/CM vía el mismo sufijo
+    de referencia que el resto de las validaciones) y un resumen
+    exclusivo de Revisión General con la cantidad de ítems con dumping
+    y cuántos tienen inconsistencia.
     """
     resultados = []
-    CAMPO = "DUMPING (MARCA/DJ)"
+    CAMPO = "DUMPING"
 
-    if df_items is None or df_items.empty or df_liq is None or df_liq.empty:
+    if df_items is None or df_items.empty:
         return resultados
 
     ref_map = _build_ref_map(df_items, df_subitems, df_caratula, datos_cm, datos_facturas)
 
-    # Marca por ítem (de la solapa Subitems)
+    # Marca y NCM por ítem (de la solapa Subitems)
     marca_por_item = {}
+    ncm_por_item = {}
     if df_subitems is not None:
         for _, row in df_subitems.iterrows():
             item = str(row.get("ITEM", "")).strip().zfill(4)
             marca = row.get("MARCA", "").strip().upper()
             if marca and item not in marca_por_item:
                 marca_por_item[item] = marca
-
-    # DJ declarada por ítem (de la solapa Items)
-    dj_por_item = {}
-    for _, row in df_items.iterrows():
-        item = str(row.get("ITEM", "")).strip().zfill(4)
-        dj_por_item[item] = row.get("D:DJ-ORIG-NOPREFER", "").strip()
+            ncm_raw = str(row.get("NCM", "")).replace(".", "").strip().upper()
+            if ncm_raw and item not in ncm_por_item:
+                ncm_por_item[item] = ncm_raw
 
     # Conceptos de dumping presentes en la liquidación, por ítem
     items_con_dumping_en_liq = set()
-    for _, row in df_liq.iterrows():
-        item = str(row.get("ITEM", "")).strip().zfill(4)
-        concepto = str(row.get("CONCEPTO", "")).strip().upper()
-        if any(kw in concepto for kw in KEYWORDS_DUMPING):
-            items_con_dumping_en_liq.add(item)
+    if df_liq is not None and not df_liq.empty:
+        for _, row in df_liq.iterrows():
+            item = str(row.get("ITEM", "")).strip().zfill(4)
+            concepto = str(row.get("CONCEPTO", "")).strip().upper()
+            if any(kw in concepto for kw in KEYWORDS_DUMPING):
+                items_con_dumping_en_liq.add(item)
 
-    items_unicos = set(marca_por_item.keys()) | set(dj_por_item.keys())
+    items_con_dumping = []  # todos los ítems que llevan dumping (paso 1)
     items_con_problema = []
 
-    for item in sorted(items_unicos):
-        marca = marca_por_item.get(item, "")
-        tiene_dj = bool(dj_por_item.get(item, ""))
+    for _, row in df_items.iterrows():
+        item = str(row.get("ITEM", "")).strip().zfill(4)
+
+        # ── Paso 1: ¿lleva dumping? ──
+        lleva_dumping = any(row.get(c, "").strip() for c in CAMPOS_DUMPING_DJ)
+        if not lleva_dumping:
+            continue
+        items_con_dumping.append(item)
+
+        origen = row.get("ORIGEN", "").strip().upper()
+        procedencia = row.get("PROCEDENCIA", "").strip().upper()
+        origen_cod = origen.split("-")[0].strip()
+        proced_cod = procedencia.split("-")[0].strip()
+        origen_igual_procedencia = bool(origen_cod) and origen_cod == proced_cod
+
+        tiene_dj = bool(row.get("D:DJ-ORIG-NOPREFER", "").strip())
         tiene_dumping_liq = item in items_con_dumping_en_liq
 
+        marca = marca_por_item.get(item, "")
+        ncm = ncm_por_item.get(item, "")
         marca_exceptuada = any(m in marca for m in MARCAS_EXCEPTUADAS_DUMPING)
-
-        if marca_exceptuada or tiene_dj:
-            corresponde_pagar = False
-            motivo = f"marca exceptuada ({marca})" if marca_exceptuada else "tiene DJ de Origen No Preferencial"
-        else:
-            corresponde_pagar = True
-            motivo = "sin marca exceptuada y sin DJ de Origen No Preferencial"
+        ncm_exceptuada = ncm[:len(NCM_EXCEPTUADA_DUMPING)] == NCM_EXCEPTUADA_DUMPING
 
         r = ref_map.get(item, {})
         suf = _ref(r.get("modelo", ""), r.get("factura", ""), r.get("cm", ""))
 
-        if corresponde_pagar and not tiene_dumping_liq:
+        # ── Paso 2: clasificación de los 5 casos ──
+        if ncm_exceptuada and marca_exceptuada:
+            # Caso 1: NCM + marca exceptuada -> no paga (firme)
+            if tiene_dumping_liq:
+                items_con_problema.append(item)
+                resultados.append(alerta(item, CAMPO,
+                    f"NCM {NCM_EXCEPTUADA_DUMPING} con marca exceptuada ({marca}) — no correspondía dumping pero está liquidado{suf}",
+                    "ERROR"))
+
+        elif tiene_dj and origen_igual_procedencia:
+            # Caso 2: DJ + origen=procedencia -> no paga (firme)
+            if tiene_dumping_liq:
+                items_con_problema.append(item)
+                resultados.append(alerta(item, CAMPO,
+                    f"DJ de Origen declarada y origen=procedencia ({origen_cod}) — no correspondía dumping pero está liquidado{suf}",
+                    "ERROR"))
+
+        elif tiene_dj and not origen_igual_procedencia:
+            # Caso 5: DJ declarada pero origen≠procedencia -> error en sí mismo
             items_con_problema.append(item)
             resultados.append(alerta(item, CAMPO,
-                f"Correspondería pagar dumping ({motivo}) pero no se encontró concepto de dumping en la liquidación{suf}",
-                "ALERTA"))
-        elif not corresponde_pagar and tiene_dumping_liq:
-            items_con_problema.append(item)
-            resultados.append(alerta(item, CAMPO,
-                f"No correspondería pagar dumping ({motivo}) pero se encontró concepto de dumping en la liquidación{suf}",
-                "ALERTA"))
+                f"DJ de Origen declarada pero origen ('{origen}') y procedencia ('{procedencia}') no coinciden{suf}",
+                "ERROR"))
+
+        elif not tiene_dj and origen_igual_procedencia:
+            # Caso 3: origen=procedencia sin DJ -> no determinado, solo
+            # alertar si NO está liquidado (si paga, no hay nada que avisar)
+            if not tiene_dumping_liq:
+                items_con_problema.append(item)
+                resultados.append(alerta(item, CAMPO,
+                    f"Origen=Procedencia ({origen_cod}) sin DJ de Origen declarada y sin concepto de dumping liquidado — verificar si corresponde el pago{suf}",
+                    "ALERTA"))
+
+        else:
+            # Caso 4: origen≠procedencia, sin excepción de marca/NCM -> paga (firme)
+            if not tiene_dumping_liq:
+                items_con_problema.append(item)
+                resultados.append(alerta(item, CAMPO,
+                    f"Origen ('{origen}') ≠ Procedencia ('{procedencia}'), sin excepción de marca/NCM — correspondía dumping y no está liquidado{suf}",
+                    "ERROR"))
 
     # ── Resumen general ──
-    total = len(items_unicos)
+    total = len(items_con_dumping)
     if total:
         if items_con_problema:
             cant = len(items_con_problema)
+            hay_error = any(r["nivel"] == "ERROR" for r in resultados if r["item"] != "GENERAL")
+            pestana = "Errores" if hay_error else "Alertas"
+            nivel_resumen = "ERROR" if hay_error else "ALERTA"
             resultados.append({
                 "item": "GENERAL", "campo": CAMPO,
-                "mensaje": f"De {total} ítems, {cant} con inconsistencia entre marca/DJ y dumping liquidado — ver pestaña Alertas",
-                "nivel": "ALERTA", "es_resumen": True,
+                "mensaje": f"De {total} ítem(s) con dumping declarado, {cant} con inconsistencia — ver pestaña {pestana}",
+                "nivel": nivel_resumen, "es_resumen": True,
             })
         else:
             resultados.append({
                 "item": "GENERAL", "campo": CAMPO,
-                "mensaje": f"De {total} ítems, ninguno con inconsistencia entre marca/DJ y dumping liquidado",
+                "mensaje": f"De {total} ítem(s) con dumping declarado, ninguno con inconsistencia",
                 "nivel": "OK", "es_resumen": True,
             })
 
