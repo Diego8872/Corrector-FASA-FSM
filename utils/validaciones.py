@@ -394,8 +394,13 @@ def validar_liquidacion(df_liq: pd.DataFrame, df_items: pd.DataFrame, df_subitem
                     resultados.append(alerta(item, "LIQUIDACIÓN", f"Ítem CON CM no debería tener '{c['concepto']}'{suf}"))
 
             if "USADO" in estado:
-                if not any(CONCEPTO_USADO in c["concepto"] for c in conceptos_item):
-                    resultados.append(alerta(item, "LIQUIDACIÓN", f"Ítem USADO pero falta '056 - D.I. USADOS R.909/94'{suf}", "ERROR"))
+                # Ítem usado CON CM: paga vía Ley Minera (concepto 032,
+                # ya exigido arriba para todo ítem con CM), no corresponde
+                # el 056 de usados — eso es exclusivo de ítems sin CM.
+                if any(CONCEPTO_USADO in c["concepto"] for c in conceptos_item):
+                    resultados.append(alerta(item, "LIQUIDACIÓN",
+                        f"Ítem USADO con CM no debería tener '056 - D.I. USADOS R.909/94' (va por Ley Minera, concepto 032){suf}",
+                        "ERROR"))
 
             conceptos_esperados_con_cm = ["032", "415", "900", "056", "051", "060"]
             for c in conceptos_item:
@@ -408,6 +413,13 @@ def validar_liquidacion(df_liq: pd.DataFrame, df_items: pd.DataFrame, df_subitem
         else:
             if any(CONCEPTO_SIN_CM_PROHIBIDO in c["concepto"] for c in conceptos_item):
                 resultados.append(alerta(item, "LIQUIDACIÓN", f"Ítem SIN CM tiene concepto '032 - TASA LEY 24196'{suf}", "ERROR"))
+
+            if "USADO" in estado:
+                # Ítem usado SIN CM: acá sí corresponde el 056, ya que no
+                # hay Ley Minera (concepto 032) que cubra la situación.
+                if not any(CONCEPTO_USADO in c["concepto"] for c in conceptos_item):
+                    resultados.append(alerta(item, "LIQUIDACIÓN",
+                        f"Ítem USADO sin CM pero falta '056 - D.I. USADOS R.909/94'{suf}", "ERROR"))
 
             for cod, nombre in [("415", "415 - I.V.A."), ("900", "900 - INGRESOS BRUTOS")]:
                 match = next((c for c in conceptos_item if cod in c["concepto"]), None)
@@ -692,5 +704,60 @@ def validar_dumping_marca_dj(df_items: pd.DataFrame, df_subitems: pd.DataFrame, 
                 "mensaje": f"De {total} ítems, ninguno con inconsistencia entre marca/DJ y dumping liquidado",
                 "nivel": "OK", "es_resumen": True,
             })
+
+    return resultados
+
+
+# ── Validación: ítems usados (identificación para revisión) ──────────────────
+
+def validar_items_usados(df_items: pd.DataFrame, df_subitems: pd.DataFrame = None,
+                          df_caratula: pd.DataFrame = None, datos_cm: dict = None,
+                          datos_facturas: dict = None) -> list:
+    """
+    Identifica los ítems declarados como USADO (campo ESTADO) y los
+    informa en Alertas con su código de material y factura asociada
+    (mismo sufijo de referencia que el resto de las validaciones), para
+    que el despachante los revise puntualmente — por ejemplo, para
+    confirmar que el cargo de CORE DEPOSIT (si corresponde) esté bien
+    contemplado en el FOB, o cualquier otra particularidad de usados.
+
+    No determina si el ítem usado está bien o mal declarado en sí mismo
+    (eso ya lo cubren otras validaciones, como la del concepto 056/032
+    en validar_liquidacion) — esta función es puramente de
+    identificación, para que ningún ítem usado pase desapercibido.
+
+    Genera un resumen exclusivo de Revisión General ("es_resumen": True)
+    con la cantidad total, y el detalle por ítem vive en Alertas.
+    """
+    resultados = []
+    CAMPO = "ÍTEM USADO"
+
+    if df_items is None or df_items.empty:
+        return resultados
+
+    ref_map = _build_ref_map(df_items, df_subitems, df_caratula, datos_cm, datos_facturas)
+
+    items_usados = []
+    for _, row in df_items.iterrows():
+        item = str(row.get("ITEM", "?")).strip().zfill(4)
+        estado = row.get("ESTADO", "").strip().upper()
+        if "USADO" in estado:
+            items_usados.append(item)
+            r = ref_map.get(item, {})
+            suf = _ref(r.get("modelo", ""), r.get("factura", ""), r.get("cm", ""))
+            resultados.append(alerta(item, CAMPO, f"Ítem declarado USADO — revisar{suf}", "ALERTA"))
+
+    if items_usados:
+        resultados.append({
+            "item": "GENERAL", "campo": CAMPO,
+            "mensaje": f"{len(items_usados)} ítem(s) declarado(s) USADO — ver pestaña Alertas",
+            "nivel": "ALERTA", "es_resumen": True,
+        })
+    else:
+        resultados.append({
+            "item": "GENERAL", "campo": CAMPO,
+            "mensaje": "Ningún ítem declarado USADO",
+            "nivel": "OK", "es_resumen": True,
+        })
 
     return resultados
