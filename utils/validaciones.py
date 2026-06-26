@@ -185,15 +185,6 @@ def validar_items(df_items: pd.DataFrame, df_subitems: pd.DataFrame = None, df_c
         if _pais_prohibido(procedencia):
             resultados.append(alerta(item, "PROCEDENCIA", f"País de procedencia PROHIBIDO: {procedencia}{suf}", "ERROR"))
 
-        origen_cod = origen.split("-")[0].strip()
-        proced_cod = procedencia.split("-")[0].strip()
-        tiene_campo_dumping = any(row.get(c, "").strip() for c in CAMPOS_DUMPING_DJ)
-        if origen_cod and proced_cod and origen_cod == proced_cod and tiene_campo_dumping:
-            dj = row.get("D:DJ-ORIG-NOPREFER", "").strip()
-            if not dj:
-                resultados.append(alerta(item, "D:DJ-ORIG-NOPREFER",
-                    f"Campos dumping declarados y origen=procedencia ({origen_cod}) — falta número IF en DJ{suf}", "ERROR"))
-
         if tiene_cm:
             autoliq = row.get("V:AUTOLIQCONTRIMP", "").strip().upper()
             if autoliq != "SI":
