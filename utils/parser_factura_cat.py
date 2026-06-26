@@ -148,6 +148,10 @@ CONCEPTOS_CARGO_CONOCIDOS = [
     "FREIGHT CHARGE",
     "HANDLING FEE",
     "EXPEDITE CHARGE",
+    "CORE DEPOSIT",           # cargo de depósito de núcleo (CORE) en ítems usados/reman.
+                              # No trae porcentaje (ej. "CORE DEPOSIT LIAB TO DLR  2,803.93"),
+                              # pero igual matchea con RE_CARGO_CONOCIDO porque esa regex
+                              # no exige porcentaje, solo concepto + monto al final de línea.
 ]
 
 RE_CARGO_CONOCIDO = re.compile(
