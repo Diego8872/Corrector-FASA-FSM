@@ -1,7 +1,7 @@
 import re
 import pandas as pd
 from utils.parser_di import normalizar_codigo, safe_float
-from config.defaults import TOLERANCIA_FOB
+from config.defaults import TOLERANCIA_FOB, DESPACHANTE, CUIT_DESPACHANTE
 
 
 def alerta(item, campo, mensaje, nivel="ALERTA"):
@@ -1192,5 +1192,108 @@ def validar_resumen_items(resultados_cm_vs_di: list, resultados_factura_vs_di: l
             resultados.append(al(msg, nivel_general_fac))
         else:
             resultados.append(ok_(msg))
+
+    return resultados
+
+
+# ── Validación: Configuración seleccionada vs Carátula del DI ────────────────
+
+def _normalizar_cuit(cuit: str) -> str:
+    """Quita guiones/espacios y deja solo los dígitos del CUIT, para
+    comparar sin importar el formato (con o sin guiones)."""
+    return re.sub(r"[^\d]", "", str(cuit or ""))
+
+
+def validar_config_vs_caratula(caratula: dict, config: dict) -> list:
+    """
+    Valida que la Empresa importadora, Régimen y Aduana seleccionados en
+    pantalla (sidebar de configuración) coincidan con lo declarado en la
+    solapa Carátula del DI — comparación por substring en ambos sentidos
+    (tolerante a que la Carátula traiga el código + descripción completa,
+    ej. "001 - BS.AS.(CAPITAL)" vs el nombre corto seleccionado en
+    pantalla). El Despachante (fijo, MINOYETTI FEDERICO) también se
+    valida de la misma forma, vía su nombre y CUIT.
+
+    Pensado para cuando este corrector se use con despachos de otros
+    importadores/regímenes/aduanas además de los habituales — si algo no
+    coincide, conviene saberlo antes de seguir analizando, ya que podría
+    indicar que se está revisando el despacho equivocado.
+    """
+    resultados = []
+
+    def al(campo, msg, nivel="ERROR"):
+        return {"item": "GENERAL", "campo": campo, "mensaje": msg, "nivel": nivel}
+    def ok_(campo, msg):
+        return {"item": "GENERAL", "campo": campo, "mensaje": msg, "nivel": "OK"}
+
+    if not caratula:
+        return resultados
+
+    def _valor_caratula(campo: str) -> str:
+        campo_upper = campo.upper()
+        for k, v in caratula.items():
+            if campo_upper in k.upper():
+                return str(v).strip()
+        return ""
+
+    def _contiene(seleccionado: str, declarado: str) -> bool:
+        s = seleccionado.strip().upper()
+        d = declarado.strip().upper()
+        if not s or not d:
+            return False
+        return s in d or d in s
+
+    # ── Empresa (razón social + CUIT) ──
+    empresa_sel = config.get("empresa", "")
+    cuit_sel = config.get("cuit_ie", "")
+    empresa_di = _valor_caratula("EMPRESA")
+    cuit_di = _valor_caratula("CUIT IE")
+
+    if empresa_di:
+        if _contiene(empresa_sel, empresa_di):
+            resultados.append(ok_("EMPRESA", f"Empresa seleccionada coincide con el DI: {empresa_di}"))
+        else:
+            resultados.append(al("EMPRESA", f"Empresa seleccionada: '{empresa_sel}' — DI declara: '{empresa_di}'"))
+
+    if cuit_di:
+        if _normalizar_cuit(cuit_sel) == _normalizar_cuit(cuit_di):
+            resultados.append(ok_("EMPRESA", f"CUIT IE coincide: {cuit_di}"))
+        else:
+            resultados.append(al("EMPRESA", f"CUIT IE seleccionado: '{cuit_sel}' — DI declara: '{cuit_di}'"))
+
+    # ── Régimen ──
+    regimen_sel = config.get("regimen", "")
+    regimen_di = _valor_caratula("REGIMEN")
+    if regimen_di:
+        if _contiene(regimen_sel, regimen_di):
+            resultados.append(ok_("REGIMEN", f"Régimen seleccionado coincide con el DI: {regimen_di}"))
+        else:
+            resultados.append(al("REGIMEN", f"Régimen seleccionado: '{regimen_sel}' — DI declara: '{regimen_di}'"))
+
+    # ── Aduana ──
+    aduana_sel_codigo = config.get("aduana_codigo", "")
+    aduana_sel_nombre = config.get("aduana", "")
+    aduana_di = _valor_caratula("ADUANA")
+    if aduana_di:
+        if _contiene(aduana_sel_codigo, aduana_di) or _contiene(aduana_sel_nombre, aduana_di):
+            resultados.append(ok_("ADUANA", f"Aduana seleccionada coincide con el DI: {aduana_di}"))
+        else:
+            resultados.append(al("ADUANA", f"Aduana seleccionada: '{aduana_sel_nombre}' — DI declara: '{aduana_di}'"))
+
+    # ── Despachante (fijo) + CUIT DA ──
+    despachante_di = _valor_caratula("DESPACHANTE")
+    cuit_da_di = _valor_caratula("CUIT DA")
+
+    if despachante_di:
+        if _contiene(DESPACHANTE, despachante_di):
+            resultados.append(ok_("DESPACHANTE", f"Despachante coincide con el DI: {despachante_di}"))
+        else:
+            resultados.append(al("DESPACHANTE", f"Despachante esperado: '{DESPACHANTE}' — DI declara: '{despachante_di}'"))
+
+    if cuit_da_di:
+        if _normalizar_cuit(CUIT_DESPACHANTE) == _normalizar_cuit(cuit_da_di):
+            resultados.append(ok_("DESPACHANTE", f"CUIT DA coincide: {cuit_da_di}"))
+        else:
+            resultados.append(al("DESPACHANTE", f"CUIT DA esperado: '{CUIT_DESPACHANTE}' — DI declara: '{cuit_da_di}'"))
 
     return resultados
