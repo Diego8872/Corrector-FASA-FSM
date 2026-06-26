@@ -9,7 +9,7 @@ from utils.parser_di import leer_di, safe_float
 from utils.validaciones import validar_items, validar_subitems, validar_liquidacion, validar_prorrateo, validar_ncm_excel, validar_resumen_liquidacion, validar_dumping_marca_dj, validar_items_usados
 from utils.extractor_api import extraer_forwarding, extraer_bl, extraer_cm, extraer_dj_origen, extraer_numero_re_de_ce
 from utils.parser_factura_cat import extraer_factura_cat
-from utils.cruce_docs import validar_cm_vs_di, validar_factura_vs_di, validar_caratula_vs_docs, validar_caratula_totales, validar_dj_origen, validar_bultos_vs_bl, validar_documentos_declarados, validar_resumen_cm, validar_resumen_dj_origen, validar_resumen_items
+from utils.cruce_docs import validar_cm_vs_di, validar_factura_vs_di, validar_caratula_vs_docs, validar_caratula_totales, validar_dj_origen, validar_bultos_vs_bl, validar_documentos_declarados, validar_resumen_cm, validar_resumen_dj_origen, validar_resumen_items, validar_config_vs_caratula
 from utils.reporte_pdf import generar_reporte_pdf
 
 st.set_page_config(page_title="Corrector FASA/FSM", page_icon="🔍", layout="wide")
@@ -60,12 +60,13 @@ with st.sidebar:
     cuit_ie = EMPRESAS[empresa]
     st.caption(f"CUIT: {cuit_ie}")
     regimen = st.selectbox("Régimen", REGIMENES)
-    aduana = st.selectbox("Aduana", ADUANAS)
+    aduana = st.selectbox("Aduana", list(ADUANAS.keys()))
+    aduana_codigo = ADUANAS[aduana]
     st.divider()
     st.caption(f"**Despachante:** {DESPACHANTE}")
     st.caption(f"**CUIT DA:** {CUIT_DESPACHANTE}")
 
-config = {"empresa": empresa, "cuit_ie": cuit_ie, "regimen": regimen, "aduana": aduana}
+config = {"empresa": empresa, "cuit_ie": cuit_ie, "regimen": regimen, "aduana": aduana, "aduana_codigo": aduana_codigo}
 
 # ─── REFERENCIA ──────────────────────────────────────────────────────────────
 referencia = st.text_input("📌 Referencia de la operación a analizar",
@@ -288,6 +289,11 @@ if analizar:
 
         # ── 9. Validaciones de campos del DI (con factura/CM ya resueltos) ──
         st.write("🔎 Validando campos del DI...")
+        # Configuración (Empresa/CUIT, Régimen, Aduana, Despachante)
+        # seleccionada en pantalla vs lo declarado en la Carátula del DI —
+        # útil para detectar si se está analizando el despacho equivocado
+        # cuando se usa este corrector con otros importadores/aduanas.
+        todos_resultados.extend(validar_config_vs_caratula(caratula, config))
         todos_resultados.extend(validar_items(df_items, df_subitems, df_caratula, datos_cm, datos_facturas))
         todos_resultados.extend(validar_subitems(df_subitems, df_items, df_caratula, datos_cm, datos_facturas))
         todos_resultados.extend(validar_prorrateo(df_items, fob_total, flete_total_di, seguro_total_di, df_subitems, df_caratula, datos_cm, datos_facturas))
