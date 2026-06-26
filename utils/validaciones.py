@@ -353,7 +353,7 @@ def validar_liquidacion(df_liq: pd.DataFrame, df_items: pd.DataFrame, df_subitem
         for c in conceptos_item:
             for kw in KEYWORDS_DUMPING:
                 if kw in c["concepto"].upper():
-                    resultados.append(alerta(item, "LIQUIDACIÓN", f"DUMPING detectado: '{c['concepto']}' — revisión urgente{suf}", "ERROR"))
+                    resultados.append(alerta(item, "LIQUIDACIÓN", f"DUMPING detectado: '{c['concepto']}' — revisión urgente{suf}", "ALERTA"))
 
         if tiene_cm:
             base_032 = vals["fob"] + vals["flete"] + vals["seguro"]
@@ -582,3 +582,115 @@ def validar_resumen_liquidacion(resultados_liquidacion: list, total_items: int) 
         "item": "GENERAL", "campo": CAMPO,
         "mensaje": mensaje, "nivel": nivel_general, "es_resumen": True,
     }]
+
+
+# ── Validación Dumping: consistencia marca/DJ vs liquidación ──────────────────
+
+MARCAS_EXCEPTUADAS_DUMPING = ["CATERPILLAR", "CUMMINS", "DEUTZ"]
+
+
+def validar_dumping_marca_dj(df_items: pd.DataFrame, df_subitems: pd.DataFrame, df_liq: pd.DataFrame,
+                              df_caratula: pd.DataFrame = None, datos_cm: dict = None,
+                              datos_facturas: dict = None) -> list:
+    """
+    Verifica que la presencia/ausencia de dumping en la liquidación de
+    cada ítem sea consistente con su situación de marca y DJ de Origen
+    No Preferencial:
+
+      - Marca CATERPILLAR/CUMMINS/DEUTZ -> NO corresponde pagar dumping
+        (marca exceptuada), sin importar si tiene DJ o no.
+      - Marca distinta + D:DJ-ORIG-NOPREFER declarada (no vacía) -> NO
+        corresponde pagar (la DJ exime del dumping).
+      - Marca distinta + sin DJ -> SÍ corresponde pagar.
+
+    Si el ítem efectivamente tiene un concepto de dumping en su
+    liquidación (detectado por las mismas palabras clave que usa
+    validar_liquidacion) y esto contradice lo que correspondería según
+    su situación, se informa como ALERTA — por ítem y a la vez en un
+    resumen exclusivo de Revisión General.
+
+    No determina si el escenario es 100% correcto en términos legales
+    (eso requiere juicio del despachante); solo señala inconsistencias
+    entre lo declarado (marca, DJ) y lo liquidado (dumping sí/no), para
+    que se revisen los casos que no calzan.
+    """
+    resultados = []
+    CAMPO = "DUMPING (MARCA/DJ)"
+
+    if df_items is None or df_items.empty or df_liq is None or df_liq.empty:
+        return resultados
+
+    ref_map = _build_ref_map(df_items, df_subitems, df_caratula, datos_cm, datos_facturas)
+
+    # Marca por ítem (de la solapa Subitems)
+    marca_por_item = {}
+    if df_subitems is not None:
+        for _, row in df_subitems.iterrows():
+            item = str(row.get("ITEM", "")).strip().zfill(4)
+            marca = row.get("MARCA", "").strip().upper()
+            if marca and item not in marca_por_item:
+                marca_por_item[item] = marca
+
+    # DJ declarada por ítem (de la solapa Items)
+    dj_por_item = {}
+    for _, row in df_items.iterrows():
+        item = str(row.get("ITEM", "")).strip().zfill(4)
+        dj_por_item[item] = row.get("D:DJ-ORIG-NOPREFER", "").strip()
+
+    # Conceptos de dumping presentes en la liquidación, por ítem
+    items_con_dumping_en_liq = set()
+    for _, row in df_liq.iterrows():
+        item = str(row.get("ITEM", "")).strip().zfill(4)
+        concepto = str(row.get("CONCEPTO", "")).strip().upper()
+        if any(kw in concepto for kw in KEYWORDS_DUMPING):
+            items_con_dumping_en_liq.add(item)
+
+    items_unicos = set(marca_por_item.keys()) | set(dj_por_item.keys())
+    items_con_problema = []
+
+    for item in sorted(items_unicos):
+        marca = marca_por_item.get(item, "")
+        tiene_dj = bool(dj_por_item.get(item, ""))
+        tiene_dumping_liq = item in items_con_dumping_en_liq
+
+        marca_exceptuada = any(m in marca for m in MARCAS_EXCEPTUADAS_DUMPING)
+
+        if marca_exceptuada or tiene_dj:
+            corresponde_pagar = False
+            motivo = f"marca exceptuada ({marca})" if marca_exceptuada else "tiene DJ de Origen No Preferencial"
+        else:
+            corresponde_pagar = True
+            motivo = "sin marca exceptuada y sin DJ de Origen No Preferencial"
+
+        r = ref_map.get(item, {})
+        suf = _ref(r.get("modelo", ""), r.get("factura", ""), r.get("cm", ""))
+
+        if corresponde_pagar and not tiene_dumping_liq:
+            items_con_problema.append(item)
+            resultados.append(alerta(item, CAMPO,
+                f"Correspondería pagar dumping ({motivo}) pero no se encontró concepto de dumping en la liquidación{suf}",
+                "ALERTA"))
+        elif not corresponde_pagar and tiene_dumping_liq:
+            items_con_problema.append(item)
+            resultados.append(alerta(item, CAMPO,
+                f"No correspondería pagar dumping ({motivo}) pero se encontró concepto de dumping en la liquidación{suf}",
+                "ALERTA"))
+
+    # ── Resumen general ──
+    total = len(items_unicos)
+    if total:
+        if items_con_problema:
+            cant = len(items_con_problema)
+            resultados.append({
+                "item": "GENERAL", "campo": CAMPO,
+                "mensaje": f"De {total} ítems, {cant} con inconsistencia entre marca/DJ y dumping liquidado — ver pestaña Alertas",
+                "nivel": "ALERTA", "es_resumen": True,
+            })
+        else:
+            resultados.append({
+                "item": "GENERAL", "campo": CAMPO,
+                "mensaje": f"De {total} ítems, ninguno con inconsistencia entre marca/DJ y dumping liquidado",
+                "nivel": "OK", "es_resumen": True,
+            })
+
+    return resultados
