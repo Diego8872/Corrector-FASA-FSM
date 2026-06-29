@@ -202,12 +202,20 @@ def validar_factura_vs_di(
             continue
 
         encontrado = False
-        for nro_factura, fac_data in datos_facturas.items():
+        for nombre_archivo, fac_data in datos_facturas.items():
             if "error" in fac_data:
                 continue
 
+            # Mostrar el número de factura real extraído del PDF (ej.
+            # "Z95051479"), no el nombre del archivo subido — el usuario
+            # puede haber guardado el PDF con cualquier nombre (ej.
+            # "zz20reprint (3).pdf") que no corresponde al número real.
+            # Si el parser no pudo extraer el número, se cae al nombre
+            # del archivo como única referencia disponible.
+            nro_factura = fac_data.get("numero_factura", "").strip() or nombre_archivo
+
             items_factura = fac_data.get("items", [])
-            usados = usados_por_factura.setdefault(nro_factura, set())
+            usados = usados_por_factura.setdefault(nombre_archivo, set())
 
             # Buscar por código + cantidad exacta, excluyendo líneas ya usadas
             match_fac = next(
