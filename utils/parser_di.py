@@ -93,24 +93,24 @@ def normalizar_codigo(codigo: str) -> str:
 def safe_float(val) -> float:
     """
     Convierte un valor numérico a float, sea cual sea el formato de
-    separador decimal/miles usado (distintos documentos usan distintas
-    convenciones: DI argentino con coma decimal, BL/facturas en inglés
-    con punto decimal, algunos con separador de miles y otros sin él).
+    separador decimal usado (DI argentino con coma decimal, BL/facturas
+    en inglés con punto decimal).
 
     Regla para desambiguar:
       - Si el string tiene tanto "," como ".": el símbolo que aparece
         MÁS A LA DERECHA es el separador decimal; el otro es de miles
         y se descarta. Ej: "9,148.50" -> 9148.50 | "9.148,50" -> 9148.50
-      - Si tiene un solo tipo de símbolo:
-          - Si aparece una sola vez y tiene exactamente 3 dígitos
-            después Y el número tiene más de 3 dígitos enteros en total,
-            se interpreta como separador de MILES (se descarta).
-            Ej: "9.148" -> 9148.0 | "9,148" -> 9148.0
-          - En cualquier otro caso (1-2 dígitos después, o más de un
-            símbolo del mismo tipo = miles repetidos), se interpreta
-            como separador DECIMAL.
-            Ej: "220.59" -> 220.59 | "220,59" -> 220.59
-            Ej: "1.234.567" -> 1234567.0 (puntos de miles repetidos)
+      - Si tiene un solo tipo de símbolo, y aparece más de una vez, son
+        separadores de miles repetidos (nunca decimal).
+        Ej: "1.234.567" -> 1234567.0
+      - Si tiene un solo tipo de símbolo y aparece una sola vez, SIEMPRE
+        se interpreta como separador DECIMAL, sin importar cuántos
+        dígitos tenga después — no se asume separador de miles a partir
+        de la cantidad de dígitos, porque varios campos de este proyecto
+        usan más de 2 decimales reales (ej. flete/seguro prorrateado con
+        hasta 5 decimales: "1299.575", "9128,1") y esa heurística los
+        rompía interpretándolos como miles.
+        Ej: "220.59" -> 220.59 | "9.148" -> 9.148 | "1299.575" -> 1299.575
       - Si no tiene ningún símbolo: se interpreta directo como número.
     """
     if val is None:
@@ -147,14 +147,9 @@ def safe_float(val) -> float:
             if len(partes) > 2:
                 s_norm = s.replace(simbolo, "")
             else:
-                digitos_despues = len(partes[-1])
-                digitos_enteros_totales = sum(len(p) for p in partes[:-1])
-                if digitos_despues == 3 and digitos_enteros_totales >= 1:
-                    # Separador de miles (ej. "9.148" o "9,148")
-                    s_norm = s.replace(simbolo, "")
-                else:
-                    # Separador decimal (ej. "220.59" o "220,59")
-                    s_norm = s.replace(simbolo, ".")
+                # Una sola ocurrencia: siempre decimal, sin importar la
+                # cantidad de dígitos después (ver docstring).
+                s_norm = s.replace(simbolo, ".")
             resultado = float(s_norm)
         else:
             resultado = float(s)
