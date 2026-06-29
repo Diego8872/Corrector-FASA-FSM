@@ -28,9 +28,29 @@ import fitz  # PyMuPDF
 # ── Utilidades ────────────────────────────────────────────────────────────────
 
 def _n(s: str) -> float:
-    """'27655,12' o '27655.12' → 27655.12"""
+    """
+    '27655,12' o '27655.12' → 27655.12 (también soporta separador de
+    miles combinado con decimal, ej. '1.234,56' o '1,234.56').
+
+    El símbolo que aparece MÁS A LA DERECHA es el separador decimal; el
+    otro (si aparece) es de miles y se descarta. Si solo aparece un
+    símbolo una vez con 1-2 dígitos después, se interpreta como decimal
+    directo (no se asume formato fijo, a diferencia de la versión
+    anterior que siempre asumía coma decimal y rompía valores con punto
+    decimal real, ej. '21098.11' -> 2109811.0 antes de este fix).
+    """
     try:
-        return float(s.strip().replace(".", "").replace(",", "."))
+        t = s.strip()
+        tiene_coma = "," in t
+        tiene_punto = "." in t
+        if tiene_coma and tiene_punto:
+            if t.rfind(",") > t.rfind("."):
+                t = t.replace(".", "").replace(",", ".")
+            else:
+                t = t.replace(",", "")
+        elif tiene_coma:
+            t = t.replace(",", ".")
+        return float(t)
     except Exception:
         return 0.0
 
