@@ -49,7 +49,7 @@ def _parse_json(texto: str) -> dict | list:
 
 def extraer_factura(pdf_bytes: bytes) -> dict:
     """Extrae factura CAT usando PyMuPDF + regex. Sin API, sin costo."""
-    from utils.parser_factura_cat import extraer_factura_cat
+    from utils_fasa.parser_factura_cat import extraer_factura_cat
     return extraer_factura_cat(pdf_bytes)
 
 
@@ -57,7 +57,7 @@ def extraer_factura(pdf_bytes: bytes) -> dict:
 
 def extraer_forwarding(pdf_bytes: bytes) -> dict:
     """Extrae Forwarding Invoice CAT/DHL usando PyMuPDF + regex. Sin API."""
-    from utils.parser_forwarding import extraer_forwarding as _extraer
+    from utils_fasa.parser_forwarding import extraer_forwarding as _extraer
     return _extraer(pdf_bytes)
 
 
@@ -115,7 +115,16 @@ disponible, sea cual sea el rótulo exacto que use esa naviera:
   "GROSS WEIGHT", "G.W.", "Gross Wt", "Weight", "Total Weight". Si el documento expresa el peso
   en otra unidad (ej. libras, toneladas), convertilo a kilogramos antes de devolverlo. Si hay
   varios pesos parciales (por contenedor o por bulto) y no hay un total explícito, sumalos para
-  obtener el total. Devolver solo el número, sin unidad ni texto."""
+  obtener el total. Devolver solo el número, sin unidad ni texto.
+
+  OJO CON EL FORMATO DEL NÚMERO: muchas navieras (ej. Maersk) expresan el peso con 3 dígitos
+  decimales reales después del punto, no separador de miles — ej. "9128.100 KGS" significa
+  NUEVE MIL CIENTO VEINTIOCHO KILOGRAMOS CON CIEN GRAMOS (9128.1 kg), NO nueve millones cientos
+  veintiocho mil cien kilogramos. En el contexto de un Bill of Lading, un peso de varios millones
+  de kg para un solo contenedor o embarque chico es prácticamente imposible — si tu lectura da un
+  número así de grande, revisalo: lo más probable es que el punto sea decimal, no separador de
+  miles. Guiate por la magnitud físicamente razonable del peso (decenas a pocas miles de kg por
+  contenedor estándar), no por la cantidad de dígitos después del separador."""
 
     try:
         texto = _llamar_claude(system, prompt, [pdf_bytes])
@@ -128,7 +137,7 @@ disponible, sea cual sea el rótulo exacto que use esa naviera:
 
 def extraer_cm(pdf_ce_bytes: bytes, pdf_re_bytes: bytes) -> dict:
     """Extrae CM usando PyMuPDF + regex. Sin API, sin costo."""
-    from utils.parser_cm import extraer_cm as _extraer_cm
+    from utils_fasa.parser_cm import extraer_cm as _extraer_cm
     return _extraer_cm(pdf_ce_bytes, pdf_re_bytes)
 
 
@@ -136,7 +145,7 @@ def extraer_cm(pdf_ce_bytes: bytes, pdf_re_bytes: bytes) -> dict:
 
 def extraer_dj_origen(pdf_bytes: bytes) -> dict:
     """Extrae DJ de Origen usando PyMuPDF + regex. Sin API."""
-    from utils.parser_dj_origen import extraer_dj_origen as _extraer
+    from utils_fasa.parser_dj_origen import extraer_dj_origen as _extraer
     return _extraer(pdf_bytes)
 
 
