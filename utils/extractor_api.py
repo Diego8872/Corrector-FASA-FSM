@@ -49,7 +49,7 @@ def _parse_json(texto: str) -> dict | list:
 
 def extraer_factura(pdf_bytes: bytes) -> dict:
     """Extrae factura CAT usando PyMuPDF + regex. Sin API, sin costo."""
-    from utils_fasa.parser_factura_cat import extraer_factura_cat
+    from utils.parser_factura_cat import extraer_factura_cat
     return extraer_factura_cat(pdf_bytes)
 
 
@@ -57,7 +57,7 @@ def extraer_factura(pdf_bytes: bytes) -> dict:
 
 def extraer_forwarding(pdf_bytes: bytes) -> dict:
     """Extrae Forwarding Invoice CAT/DHL usando PyMuPDF + regex. Sin API."""
-    from utils_fasa.parser_forwarding import extraer_forwarding as _extraer
+    from utils.parser_forwarding import extraer_forwarding as _extraer
     return _extraer(pdf_bytes)
 
 
@@ -137,7 +137,7 @@ disponible, sea cual sea el rótulo exacto que use esa naviera:
 
 def extraer_cm(pdf_ce_bytes: bytes, pdf_re_bytes: bytes) -> dict:
     """Extrae CM usando PyMuPDF + regex. Sin API, sin costo."""
-    from utils_fasa.parser_cm import extraer_cm as _extraer_cm
+    from utils.parser_cm import extraer_cm as _extraer_cm
     return _extraer_cm(pdf_ce_bytes, pdf_re_bytes)
 
 
@@ -145,7 +145,7 @@ def extraer_cm(pdf_ce_bytes: bytes, pdf_re_bytes: bytes) -> dict:
 
 def extraer_dj_origen(pdf_bytes: bytes) -> dict:
     """Extrae DJ de Origen usando PyMuPDF + regex. Sin API."""
-    from utils_fasa.parser_dj_origen import extraer_dj_origen as _extraer
+    from utils.parser_dj_origen import extraer_dj_origen as _extraer
     return _extraer(pdf_bytes)
 
 
