@@ -246,6 +246,7 @@ def validar_factura_vs_di(
             nombre_archivo, fac_data, match_fac = min(
                 candidatos, key=lambda c: abs(_fob_candidato(c) - fob_di)
             )
+            nro_factura = fac_data.get("numero_factura", "").strip() or nombre_archivo
             usados = usados_por_factura.setdefault(nombre_archivo, set())
             if True:
                 encontrado = True
