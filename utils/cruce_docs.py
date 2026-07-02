@@ -205,12 +205,14 @@ def validar_factura_vs_di(
         # código + cantidad, sin cortar en el primero. Si el mismo código
         # aparece en dos facturas con distinto FOB, desempatamos eligiendo
         # el candidato cuyo FOB sea más cercano al declarado en la DI.
+        # IMPORTANTE: no llamar setdefault acá — no marcar nada como usado
+        # hasta que se elija el candidato final.
         candidatos = []  # lista de (nombre_archivo, fac_data, item_factura)
         for nombre_archivo, fac_data in datos_facturas.items():
             if "error" in fac_data:
                 continue
             items_factura = fac_data.get("items", [])
-            usados = usados_por_factura.setdefault(nombre_archivo, set())
+            usados = usados_por_factura.get(nombre_archivo, set())
             # Match por código + cantidad exacta
             for i in items_factura:
                 if (id(i) not in usados
@@ -223,7 +225,7 @@ def validar_factura_vs_di(
                 if "error" in fac_data:
                     continue
                 items_factura = fac_data.get("items", [])
-                usados = usados_por_factura.setdefault(nombre_archivo, set())
+                usados = usados_por_factura.get(nombre_archivo, set())
                 for i in items_factura:
                     if (id(i) not in usados
                             and normalizar_codigo(i.get("codigo_parte", "")) == modelo_di):
@@ -233,74 +235,67 @@ def validar_factura_vs_di(
         if candidatos:
             # Desempate: elegir el candidato con FOB más cercano al DI
             def _fob_candidato(cand):
-                nombre_archivo, fac_data, item_fac = cand
-                tipo = fac_data.get("tipo_cargos", "por_item")
+                _narch, _fdata, _ifac = cand
+                tipo = _fdata.get("tipo_cargos", "por_item")
                 if tipo == "por_item":
-                    return safe_float(item_fac.get("subtotal", 0))
-                total_partes = safe_float(fac_data.get("total_partes", 0))
-                total_cargos = safe_float(fac_data.get("total_cargos", 0))
-                precio_parte = safe_float(item_fac.get("precio_total_parte", 0))
-                prop = precio_parte / total_partes if total_partes else 0
-                return round(precio_parte + (total_cargos * prop), 2)
+                    return safe_float(_ifac.get("subtotal", 0))
+                _tp = safe_float(_fdata.get("total_partes", 0))
+                _tc = safe_float(_fdata.get("total_cargos", 0))
+                _pp = safe_float(_ifac.get("precio_total_parte", 0))
+                _prop = _pp / _tp if _tp else 0
+                return round(_pp + (_tc * _prop), 2)
 
             nombre_archivo, fac_data, match_fac = min(
                 candidatos, key=lambda c: abs(_fob_candidato(c) - fob_di)
             )
             nro_factura = fac_data.get("numero_factura", "").strip() or nombre_archivo
-            usados = usados_por_factura.setdefault(nombre_archivo, set())
-            if True:
-                encontrado = True
-                usados.add(id(match_fac))
-                tipo_cargos = fac_data.get("tipo_cargos", "por_item")
+            # Marcar el candidato elegido como usado para no reasignarlo
+            usados_por_factura.setdefault(nombre_archivo, set()).add(id(match_fac))
+            encontrado = True
+            tipo_cargos = fac_data.get("tipo_cargos", "por_item")
 
-                if tipo_cargos == "por_item":
-                    fob_esperado = safe_float(match_fac.get("subtotal", 0))
-                else:
-                    total_partes = safe_float(fac_data.get("total_partes", 0))
-                    total_cargos = safe_float(fac_data.get("total_cargos", 0))
-                    precio_parte = safe_float(match_fac.get("precio_total_parte", 0))
-                    proporcion   = precio_parte / total_partes if total_partes else 0
-                    fob_esperado = round(precio_parte + (total_cargos * proporcion), 2)
+            if tipo_cargos == "por_item":
+                fob_esperado = safe_float(match_fac.get("subtotal", 0))
+            else:
+                total_partes = safe_float(fac_data.get("total_partes", 0))
+                total_cargos = safe_float(fac_data.get("total_cargos", 0))
+                precio_parte = safe_float(match_fac.get("precio_total_parte", 0))
+                proporcion   = precio_parte / total_partes if total_partes else 0
+                fob_esperado = round(precio_parte + (total_cargos * proporcion), 2)
 
-                codigo_ref = match_fac.get("codigo_parte", modelo_di)
-                codigo_ref_norm = normalizar_codigo(codigo_ref)
+            codigo_ref = match_fac.get("codigo_parte", modelo_di)
+            codigo_ref_norm = normalizar_codigo(codigo_ref)
 
-                # Validación CÓDIGO (DI vs Factura) — explícita, aunque el
-                # match ya implica coincidencia normalizada; deja constancia
-                # en el reporte de que se revisó y dio bien.
-                if codigo_ref_norm != modelo_di:
-                    resultados.append(alerta(
-                        item_num, "CÓDIGO (FACTURA)",
-                        f"Código DI: '{modelo_di}' — Código factura: '{codigo_ref}' | Factura: {nro_factura}",
-                        "ALERTA"
-                    ))
-                else:
-                    resultados.append(ok(
-                        item_num, "CÓDIGO (FACTURA)",
-                        f"Código DI: {modelo_di} — Código factura: {codigo_ref} | Factura: {nro_factura}"
-                    ))
+            if codigo_ref_norm != modelo_di:
+                resultados.append(alerta(
+                    item_num, "CÓDIGO (FACTURA)",
+                    f"Código DI: '{modelo_di}' — Código factura: '{codigo_ref}' | Factura: {nro_factura}",
+                    "ALERTA"
+                ))
+            else:
+                resultados.append(ok(
+                    item_num, "CÓDIGO (FACTURA)",
+                    f"Código DI: {modelo_di} — Código factura: {codigo_ref} | Factura: {nro_factura}"
+                ))
 
-                # Validación FOB
-                if round(fob_di, 2) != round(fob_esperado, 2):
-                    resultados.append(alerta(
-                        item_num, "MONTO FOB (FACTURA)",
-                        f"FOB DI: {fob_di:.2f} — FOB factura: {fob_esperado:.2f} "
-                        f"(dif: {abs(fob_di - fob_esperado):.2f}) | "
-                        f"Código: {codigo_ref} | Factura: {nro_factura}",
-                        "ERROR"
-                    ))
-                else:
-                    resultados.append(ok(
-                        item_num, "MONTO FOB (FACTURA)",
-                        f"FOB correcto vs factura: {fob_di:.2f} | "
-                        f"Código: {codigo_ref} | Factura: {nro_factura}"
-                    ))
+            if round(fob_di, 2) != round(fob_esperado, 2):
+                resultados.append(alerta(
+                    item_num, "MONTO FOB (FACTURA)",
+                    f"FOB DI: {fob_di:.2f} — FOB factura: {fob_esperado:.2f} "
+                    f"(dif: {abs(fob_di - fob_esperado):.2f}) | "
+                    f"Código: {codigo_ref} | Factura: {nro_factura}",
+                    "ERROR"
+                ))
+            else:
+                resultados.append(ok(
+                    item_num, "MONTO FOB (FACTURA)",
+                    f"FOB correcto vs factura: {fob_di:.2f} | "
+                    f"Código: {codigo_ref} | Factura: {nro_factura}"
+                ))
 
-                # Segunda validación: código en clasificación
-                resultados.extend(
-                    _validar_codigo_en_clasificacion(modelo_di, codigos_clasi, item_num, nro_factura)
-                )
-                break
+            resultados.extend(
+                _validar_codigo_en_clasificacion(modelo_di, codigos_clasi, item_num, nro_factura)
+            )
 
         if not encontrado:
             resultados.append(alerta(
