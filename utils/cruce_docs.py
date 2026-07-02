@@ -278,7 +278,7 @@ def validar_factura_vs_di(
                     f"Código DI: {modelo_di} — Código factura: {codigo_ref} | Factura: {nro_factura}"
                 ))
 
-            if round(fob_di, 2) != round(fob_esperado, 2):
+            if abs(fob_di - fob_esperado) > TOLERANCIA_FOB:
                 resultados.append(alerta(
                     item_num, "MONTO FOB (FACTURA)",
                     f"FOB DI: {fob_di:.2f} — FOB factura: {fob_esperado:.2f} "
@@ -1140,19 +1140,24 @@ def validar_resumen_items(resultados_cm_vs_di: list, resultados_factura_vs_di: l
     partes_cm = []
     nivel_general_cm = None
     hubo_cm = False
+    items_con_cm = evaluados_cm = 0  # se calcula del primer campo disponible
     for campo_origen, nombre_mostrar, etiqueta_nc in campos_cm:
         evaluados, ok_count, no_comparable, nivel_problema = _resumen_campo(resultados_cm_vs_di, campo_origen)
         if evaluados == 0:
             continue  # ningún ítem tiene CM en este despacho para este campo
         hubo_cm = True
-        # Para CM, "no comparable" son ítems sin CM en absoluto — info ya
-        # cubierta por el resumen de Certificados Mineros, así que acá no
-        # se desglosa por separado, solo evaluados/ok sobre el total real.
+        # Usar "evaluados" como denominador real (solo ítems con CM).
+        # Los que no tienen CM simplemente no aplica — se muestra aparte.
+        if not evaluados_cm:
+            evaluados_cm = evaluados
+        sin_cm = total_items_di - evaluados
+        sufijo_sin_cm = f" ({sin_cm} sin CM, no aplica)" if sin_cm else ""
         if not nivel_problema:
-            partes_cm.append(f"{nombre_mostrar} {ok_count}/{total_items_di} OK")
+            partes_cm.append(f"{nombre_mostrar} {ok_count}/{evaluados_cm} OK{sufijo_sin_cm}")
         else:
             pestana = "Errores" if nivel_problema == "ERROR" else "Alertas"
-            partes_cm.append(f"{nombre_mostrar} {ok_count}/{total_items_di} OK — ver pestaña {pestana}")
+            con_diff = evaluados - ok_count
+            partes_cm.append(f"{nombre_mostrar} {ok_count}/{evaluados_cm} OK — {con_diff} con diferencia — ver pestaña {pestana}{sufijo_sin_cm}")
             if nivel_problema == "ERROR":
                 nivel_general_cm = "ERROR"
             elif nivel_general_cm != "ERROR":
