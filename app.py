@@ -310,8 +310,10 @@ if analizar:
             # pago si está declarada) y lo efectivamente liquidado. Corre
             # junto a Liquidación porque necesita la misma solapa (df_liq).
             todos_resultados.extend(validar_dumping_marca_dj(df_items, df_subitems, df_liq, df_caratula, datos_cm, datos_facturas))
+        resultados_ncm_excel = []
         if df_ncm is not None:
-            todos_resultados.extend(validar_ncm_excel(df_subitems, df_ncm, df_items, df_caratula, datos_cm, datos_facturas))
+            resultados_ncm_excel = validar_ncm_excel(df_subitems, df_ncm, df_items, df_caratula, datos_cm, datos_facturas)
+            todos_resultados.extend(resultados_ncm_excel)
         st.write(f"   ✅ {len(todos_resultados)} resultados")
 
         # ── 10. Cruces ────────────────────────────────────────────────────
@@ -343,7 +345,7 @@ if analizar:
         # Alertas/OK, donde vive el detalle real de cada cruce.
         todos_resultados.extend(validar_resumen_cm(df_items, datos_cm, resultados_cm_vs_di))
         todos_resultados.extend(validar_resumen_dj_origen(df_items, datos_dj, resultados_dj_origen))
-        todos_resultados.extend(validar_resumen_items(resultados_cm_vs_di, resultados_factura_vs_di, len(df_items)))
+        todos_resultados.extend(validar_resumen_items(resultados_cm_vs_di, resultados_factura_vs_di, len(df_items), resultados_ncm_excel))
 
         status.update(label="✅ Análisis completado", state="complete")
 
