@@ -201,40 +201,53 @@ def validar_factura_vs_di(
         if not modelo_di or not item_num or item_num == "0000":
             continue
 
-        encontrado = False
+        # Reunir TODOS los candidatos de TODAS las facturas que matcheen
+        # código + cantidad, sin cortar en el primero. Si el mismo código
+        # aparece en dos facturas con distinto FOB, desempatamos eligiendo
+        # el candidato cuyo FOB sea más cercano al declarado en la DI.
+        candidatos = []  # lista de (nombre_archivo, fac_data, item_factura)
         for nombre_archivo, fac_data in datos_facturas.items():
             if "error" in fac_data:
                 continue
-
-            # Mostrar el número de factura real extraído del PDF (ej.
-            # "Z95051479"), no el nombre del archivo subido — el usuario
-            # puede haber guardado el PDF con cualquier nombre (ej.
-            # "zz20reprint (3).pdf") que no corresponde al número real.
-            # Si el parser no pudo extraer el número, se cae al nombre
-            # del archivo como única referencia disponible.
-            nro_factura = fac_data.get("numero_factura", "").strip() or nombre_archivo
-
             items_factura = fac_data.get("items", [])
             usados = usados_por_factura.setdefault(nombre_archivo, set())
+            # Match por código + cantidad exacta
+            for i in items_factura:
+                if (id(i) not in usados
+                        and normalizar_codigo(i.get("codigo_parte", "")) == modelo_di
+                        and abs(safe_float(i.get("cantidad", 0)) - cantidad_di) < 0.01):
+                    candidatos.append((nombre_archivo, fac_data, i))
+        # Fallback: solo código si no hubo match cantidad
+        if not candidatos:
+            for nombre_archivo, fac_data in datos_facturas.items():
+                if "error" in fac_data:
+                    continue
+                items_factura = fac_data.get("items", [])
+                usados = usados_por_factura.setdefault(nombre_archivo, set())
+                for i in items_factura:
+                    if (id(i) not in usados
+                            and normalizar_codigo(i.get("codigo_parte", "")) == modelo_di):
+                        candidatos.append((nombre_archivo, fac_data, i))
 
-            # Buscar por código + cantidad exacta, excluyendo líneas ya usadas
-            match_fac = next(
-                (i for i in items_factura
-                 if id(i) not in usados
-                 and normalizar_codigo(i.get("codigo_parte", "")) == modelo_di
-                 and abs(safe_float(i.get("cantidad", 0)) - cantidad_di) < 0.01),
-                None
+        encontrado = False
+        if candidatos:
+            # Desempate: elegir el candidato con FOB más cercano al DI
+            def _fob_candidato(cand):
+                nombre_archivo, fac_data, item_fac = cand
+                tipo = fac_data.get("tipo_cargos", "por_item")
+                if tipo == "por_item":
+                    return safe_float(item_fac.get("subtotal", 0))
+                total_partes = safe_float(fac_data.get("total_partes", 0))
+                total_cargos = safe_float(fac_data.get("total_cargos", 0))
+                precio_parte = safe_float(item_fac.get("precio_total_parte", 0))
+                prop = precio_parte / total_partes if total_partes else 0
+                return round(precio_parte + (total_cargos * prop), 2)
+
+            nombre_archivo, fac_data, match_fac = min(
+                candidatos, key=lambda c: abs(_fob_candidato(c) - fob_di)
             )
-            # Fallback: solo por código, excluyendo usadas
-            if not match_fac:
-                match_fac = next(
-                    (i for i in items_factura
-                     if id(i) not in usados
-                     and normalizar_codigo(i.get("codigo_parte", "")) == modelo_di),
-                    None
-                )
-
-            if match_fac:
+            usados = usados_por_factura.setdefault(nombre_archivo, set())
+            if True:
                 encontrado = True
                 usados.add(id(match_fac))
                 tipo_cargos = fac_data.get("tipo_cargos", "por_item")
@@ -693,7 +706,11 @@ def validar_bultos_vs_bl(df_bultos: pd.DataFrame, datos_bl: dict) -> list:
     peso_bruto_bl            = safe_float(datos_bl.get("peso_bruto_kg", 0))
 
     # ── Contenedores ──
-    if cantidad_contenedores_di > 0 or cantidad_contenedores_bl > 0:
+    # Solo se compara si la DI declaró explícitamente un renglón "CONTENEDOR"
+    # en Bultos. Si la DI no lo declara (habitual cuando todo se carga como
+    # bultos sueltos aunque el BL sea FCL con 1 contenedor), no es un error:
+    # son dos formas válidas de declarar la misma carga.
+    if cantidad_contenedores_di > 0:
         if cantidad_contenedores_di != cantidad_contenedores_bl:
             resultados.append(al(f"Cantidad de contenedores — DI: {cantidad_contenedores_di:.0f} — BL: {cantidad_contenedores_bl:.0f}"))
         else:
@@ -1119,10 +1136,10 @@ def validar_resumen_items(resultados_cm_vs_di: list, resultados_factura_vs_di: l
 
     # ── Grupo CM ──
     campos_cm = [
-        ("NCM (CM)", "NCM", "sin CM declarado/subido"),
-        ("MODELO (CM)", "MODELO", "sin CM declarado/subido"),
-        ("CANTIDAD (CM)", "CANTIDAD", "sin CM declarado/subido"),
-        ("MONTO FOB (CM)", "MONTO FOB CM", "sin CM declarado/subido"),
+        ("NCM (CM)", "NCM vs CM", "sin CM declarado/subido"),
+        ("MODELO (CM)", "MODELO vs CM", "sin CM declarado/subido"),
+        ("CANTIDAD (CM)", "CANTIDAD vs CM", "sin CM declarado/subido"),
+        ("MONTO FOB (CM)", "FOB vs CM", "sin CM declarado/subido"),
     ]
     partes_cm = []
     nivel_general_cm = None
@@ -1165,7 +1182,7 @@ def validar_resumen_items(resultados_cm_vs_di: list, resultados_factura_vs_di: l
     nivel_general_fac = None
 
     if evaluados_cod or no_comp_cod:
-        parte, nivel_frag = _armar_parte("CÓDIGO", evaluados_cod, ok_cod, 0, nivel_cod,
+        parte, nivel_frag = _armar_parte("CÓDIGO vs Factura", evaluados_cod, ok_cod, 0, nivel_cod,
                                           "no encontrado(s) en factura", "no encontrado(s) en factura")
         if parte:
             partes_fac.append(parte)
@@ -1175,7 +1192,7 @@ def validar_resumen_items(resultados_cm_vs_di: list, resultados_factura_vs_di: l
                 nivel_general_fac = "ALERTA"
 
     if evaluados_fob or no_comp_fob:
-        parte, nivel_frag = _armar_parte("MONTO FOB", evaluados_fob, ok_fob, no_comp_fob, nivel_fob,
+        parte, nivel_frag = _armar_parte("FOB vs Factura", evaluados_fob, ok_fob, no_comp_fob, nivel_fob,
                                           "no comparable(s) (sin match de código)")
         if parte:
             partes_fac.append(parte)
@@ -1185,7 +1202,7 @@ def validar_resumen_items(resultados_cm_vs_di: list, resultados_factura_vs_di: l
                 nivel_general_fac = "ALERTA"
 
     if evaluados_cla or no_comp_cla:
-        parte, nivel_frag = _armar_parte("CLASIFICACIÓN", evaluados_cla, ok_cla, no_comp_cla, nivel_cla,
+        parte, nivel_frag = _armar_parte("NCM vs Excel Clasif.", evaluados_cla, ok_cla, no_comp_cla, nivel_cla,
                                           "no comparable(s) (sin match de código)")
         if parte:
             partes_fac.append(parte)
