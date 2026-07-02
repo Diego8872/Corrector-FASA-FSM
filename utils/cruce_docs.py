@@ -1041,7 +1041,8 @@ def validar_resumen_dj_origen(df_items: pd.DataFrame, datos_dj: list, resultados
 # ── Resumen General: Ítems vs CM y vs Factura ─────────────────────────────────
 
 def validar_resumen_items(resultados_cm_vs_di: list, resultados_factura_vs_di: list,
-                           total_items_di: int = None) -> list:
+                           total_items_di: int = None,
+                           resultados_ncm_excel: list = None) -> list:
     """
     Resumen a nivel despacho del detalle por ítem, agrupado por campo —
     no por ítem, ya que no todos los ítems tienen los mismos campos
@@ -1218,6 +1219,20 @@ def validar_resumen_items(resultados_cm_vs_di: list, resultados_factura_vs_di: l
             resultados.append(al(msg, nivel_general_fac))
         else:
             resultados.append(ok_(msg))
+
+    # ── NCM vs Excel (comparación NCM DI contra NCM del Excel de clasificación) ──
+    if resultados_ncm_excel:
+        evaluados_ncm_xl, ok_ncm_xl, _, nivel_ncm_xl = _resumen_campo(resultados_ncm_excel, "NCM vs EXCEL")
+        if evaluados_ncm_xl:
+            con_diff = evaluados_ncm_xl - ok_ncm_xl
+            if not nivel_ncm_xl:
+                resultados.append(ok_(f"De {total_items_di} ítems del DI: NCM vs Excel {ok_ncm_xl}/{evaluados_ncm_xl} evaluados OK (resto sin código en Excel)"))
+            else:
+                pestana = "Errores" if nivel_ncm_xl == "ERROR" else "Alertas"
+                resultados.append(al(
+                    f"De {total_items_di} ítems del DI: NCM vs Excel {ok_ncm_xl}/{evaluados_ncm_xl} evaluados OK — {con_diff} con NCM distinto — ver pestaña {pestana}",
+                    nivel_ncm_xl
+                ))
 
     return resultados
 
