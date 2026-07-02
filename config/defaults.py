@@ -34,7 +34,7 @@ PAISES_PROHIBIDOS = [
 CONCEPTOS_CON_CM = {
     "032": {"nombre": "032 - TASA LEY 24196", "porcentaje": 1.0},
     "415": {"nombre": "415 - I.V.A.", "porcentaje": 21.0},
-    "900": {"nombre": "900 - INGRESOS BRUTOS", "porcentaje": 1.4677},
+    # 900 - INGRESOS BRUTOS: excluido de la validación para ítems CON CM
 }
 # Concepto que NO debe aparecer en ítems SIN CM
 CONCEPTO_SIN_CM_PROHIBIDO = "032"
