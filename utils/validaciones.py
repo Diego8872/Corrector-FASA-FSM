@@ -377,7 +377,7 @@ def validar_liquidacion(df_liq: pd.DataFrame, df_items: pd.DataFrame, df_subitem
                         resultados.append(alerta(item, "LIQUIDACIÓN", f"'{nombre}': porcentaje {pct_real}% — se esperaba {pct_esperado}%{suf}", "ERROR"))
                     base_esperada = base_032 + importe_032
 
-                if round(match["base"], 2) != round(base_esperada, 2):
+                if abs(match["base"] - base_esperada) > TOLERANCIA_FOB:
                     resultados.append(alerta(item, "LIQUIDACIÓN", f"'{nombre}': base imponible {match['base']:.2f} — esperada {base_esperada:.2f}{suf}"))
 
             for c in conceptos_item:
