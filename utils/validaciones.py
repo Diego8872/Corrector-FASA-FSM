@@ -393,7 +393,7 @@ def validar_liquidacion(df_liq: pd.DataFrame, df_items: pd.DataFrame, df_subitem
                         f"Ítem USADO con CM no debería tener '056 - D.I. USADOS R.909/94' (va por Ley Minera, concepto 032){suf}",
                         "ERROR"))
 
-            conceptos_esperados_con_cm = ["032", "415", "900", "056", "051", "060"]
+            conceptos_esperados_con_cm = ["032", "415", "056", "051", "060"]  # 900 excluido para ítems CON CM
             for c in conceptos_item:
                 es_esperado = any(cod in c["concepto"] for cod in conceptos_esperados_con_cm)
                 es_dumping = any(kw in c["concepto"].upper() for kw in KEYWORDS_DUMPING)
