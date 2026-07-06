@@ -165,10 +165,32 @@ if analizar:
         st.write(f"   ✅ Totales calculados: FOB {fob_total:.2f}")
 
         # ── 3. Excel NCM / Clasificación (solo lectura; validación en paso 9) ──
+        # Hay dos formatos posibles de este Excel:
+        #   - "Marítimo": trae una fila de encabezados reales (PART_NUMBER,
+        #     etc.), con el NCM en la columna sin nombre que sigue.
+        #   - "Aéreo" (ej. clasi.xlsx): tabla simple de 2 columnas SIN
+        #     encabezado — la primera fila ya es un dato (código de parte,
+        #     NCM). Si se lee con el header por defecto, pandas termina
+        #     nombrando la primera columna con ese valor (a veces un
+        #     número), lo que rompe validar_ncm_excel más adelante.
+        # Se detecta cuál es mirando si la primera fila "parece" un
+        # encabezado (contiene palabras clave tipo PART/NCM/etc.).
         df_ncm = None
         if ncm_file:
             try:
-                df_ncm = pd.read_excel(ncm_file, dtype=str)
+                probe = pd.read_excel(ncm_file, header=None, dtype=str, nrows=1)
+                primera_fila = probe.iloc[0].tolist()
+                parece_header = any(
+                    isinstance(v, str) and any(k in v.upper() for k in ["PART", "NCM", "PARTE", "CODIGO", "COD_", "MATERIAL"])
+                    for v in primera_fila if v is not None
+                )
+                if parece_header:
+                    df_ncm = pd.read_excel(ncm_file, dtype=str)
+                else:
+                    ncm_file.seek(0)
+                    df_ncm = pd.read_excel(ncm_file, header=None, dtype=str)
+                    df_ncm = df_ncm.iloc[:, :2]
+                    df_ncm.columns = ["PART_NUMBER", "NCM"]
                 st.write("   ✅ Excel de clasificación leído")
             except Exception as e:
                 st.write(f"   ❌ Error leyendo Excel NCM: {e}")
