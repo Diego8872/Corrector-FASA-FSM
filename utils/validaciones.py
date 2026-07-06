@@ -465,9 +465,14 @@ def validar_ncm_excel(df_subitems: pd.DataFrame, df_ncm: pd.DataFrame, df_items:
     col_parte = None
     col_ncm = None
     for col in df_ncm.columns:
-        if "PART_NUMBER" in col.upper() or "PARTE" in col.upper():
+        # str(col) porque, si el Excel de clasificación no trae fila de
+        # encabezado (formato "aéreo": solo 2 columnas de datos), pandas
+        # puede nombrar la columna con el primer valor de la fila (a
+        # veces un número/int), y ese valor no tiene método .upper().
+        col_str = str(col).upper()
+        if "PART_NUMBER" in col_str or "PARTE" in col_str:
             col_parte = col
-        if col.upper() in ["NCM", "POSICION", "ARANCEL"]:
+        if col_str in ["NCM", "POSICION", "ARANCEL"]:
             col_ncm = col
 
     if not col_ncm and col_parte:
