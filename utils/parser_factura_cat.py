@@ -116,10 +116,9 @@ RE_ITEM = re.compile(
     r"\s+"
     r"([\d,]+)"               # qty
     r"\s+AA\s+"               # tipo fijo AA
-    r"([\w\-]+(?:[A-Z()]+)?)" # código + sufijo origen (letras, paréntesis)
+    r"(\S+)"                  # código + cualquier sufijo de origen (letras, (), #, etc.)
     r"\s+"
-    r"([A-Z]{2})"             # sufijo descriptivo (VA, QC, JA...)
-    r"\s{2,}"
+    r"(?:([A-Z]{2})\s{2,})?"  # sufijo descriptivo opcional (VA, QC, JA...) — a veces no viene
     r"(.+?)"                  # descripción
     r"\s{2,}"
     r"([\d,]+\.\d{2})"       # unit price
@@ -245,7 +244,7 @@ def extraer_factura_cat(pdf_bytes: bytes) -> dict:
             item_num    = int(m.group(1))
             qty         = _n(m.group(2))
             part_raw    = m.group(3).strip()
-            sufijo_desc = m.group(4).strip()
+            sufijo_desc = (m.group(4) or "").strip()
             descripcion = (sufijo_desc + " " + m.group(5)).strip()
             unit_price  = _n(m.group(6))
             extended    = _n(m.group(7))
