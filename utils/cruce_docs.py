@@ -102,7 +102,7 @@ def validar_cm_vs_di(df_items: pd.DataFrame, df_subitems: pd.DataFrame, datos_cm
             sub = df_subitems[df_subitems["ITEM"].str.zfill(4) == item_num]
             if sub.empty:
                 resultados.append(alerta(item_num, "SUBITEM",
-                    f"No se encontró subitem en el DI para ítem {item_num}"))
+                    f"[CM: {numero_cm}] No se encontró subitem en el DI para ítem {item_num}"))
                 continue
 
             for _, subrow in sub.iterrows():
@@ -713,7 +713,15 @@ def validar_bultos_vs_bl(df_bultos: pd.DataFrame, datos_bl: dict) -> list:
             resultados.append(ok_(f"Cantidad de contenedores OK: {cantidad_contenedores_di:.0f}"))
 
     # ── Bultos sueltos ──
-    if cantidad_bultos_di > 0 or cantidad_bultos_bl > 0:
+    # Si la DI ya declaró contenedor(es) (caso típico FCL), el conteo de
+    # piezas/bultos que trae el BL (ej. "53 PIECE") describe el contenido
+    # DENTRO del contenedor — no es un renglón de "bultos sueltos"
+    # adicional a comparar contra la DI, que correctamente declara 0 en
+    # ese caso (todo va como 1 CONTENEDOR). Comparar igual generaba un
+    # falso "DI: 0 — BL: 53". Incluso si además hay contenedores, solo
+    # tiene sentido esta comparación cuando la DI NO declaró ningún
+    # contenedor (carga suelta / LCL).
+    if cantidad_contenedores_di == 0 and (cantidad_bultos_di > 0 or cantidad_bultos_bl > 0):
         if cantidad_bultos_di != cantidad_bultos_bl:
             resultados.append(al(f"Cantidad de bultos — DI: {cantidad_bultos_di:.0f} — BL: {cantidad_bultos_bl:.0f}"))
         else:
@@ -903,7 +911,7 @@ def validar_resumen_cm(df_items: pd.DataFrame, datos_cm: dict, resultados_cm_vs_
     # Niveles encontrados en el detalle (NCM/MODELO/CANTIDAD/MONTO FOB) por
     # CM. El número de CM se infiere del propio mensaje, que siempre
     # empieza con "[CM: <numero>] ..." en validar_cm_vs_di.
-    campos_detalle_cm = {"NCM (CM)", "MODELO (CM)", "CANTIDAD (CM)", "MONTO FOB (CM)"}
+    campos_detalle_cm = {"NCM (CM)", "MODELO (CM)", "CANTIDAD (CM)", "MONTO FOB (CM)", "CM", "SUBITEM"}
     nivel_por_cm = {}  # numero_cm -> "ERROR" | "ALERTA" (el más alto encontrado)
     for r in resultados_cm_vs_di or []:
         if r.get("campo") not in campos_detalle_cm or r.get("nivel") == "OK":
