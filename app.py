@@ -6,7 +6,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from config.defaults import EMPRESAS, DESPACHANTE, CUIT_DESPACHANTE, REGIMENES, ADUANAS
 from utils.parser_di import leer_di, safe_float
-from utils.validaciones import validar_items, validar_subitems, validar_liquidacion, validar_prorrateo, validar_ncm_excel, validar_resumen_liquidacion, validar_dumping_marca_dj, validar_items_usados
+from utils.validaciones import validar_items, validar_subitems, validar_liquidacion, validar_prorrateo, validar_ncm_excel, validar_resumen_liquidacion, validar_dumping_marca_dj, validar_items_usados, validar_campos_control, CAMPOS_INFORMATIVOS
 from utils.extractor_api import extraer_forwarding, extraer_bl, extraer_cm, extraer_dj_origen, extraer_numero_re_de_ce
 from utils.parser_factura_cat import extraer_factura_cat
 from utils.cruce_docs import validar_cm_vs_di, validar_factura_vs_di, validar_caratula_vs_docs, validar_caratula_totales, validar_dj_origen, validar_bultos_vs_bl, validar_documentos_declarados, validar_resumen_cm, validar_resumen_dj_origen, validar_resumen_items, validar_config_vs_caratula
@@ -323,6 +323,10 @@ if analizar:
         # puntual (ej. confirmar CORE DEPOSIT contemplado en el FOB).
         # No depende de la liquidación, corre siempre.
         todos_resultados.extend(validar_items_usados(df_items, df_subitems, df_caratula, datos_cm, datos_facturas))
+        # Campos de control declarativos (Items): valores fijos esperados,
+        # opcionales u obligatorios según el campo. No depende de la
+        # liquidación, corre siempre.
+        todos_resultados.extend(validar_campos_control(df_items, df_subitems, df_caratula, datos_cm, datos_facturas))
         if not df_liq.empty:
             resultados_liquidacion = validar_liquidacion(df_liq, df_items, df_subitems, df_caratula, datos_cm, datos_facturas)
             todos_resultados.extend(resultados_liquidacion)
@@ -515,7 +519,7 @@ if "resultados" in st.session_state:
     # siempre al final de la pestaña, después del resto de los campos
     # (que mantienen orden alfabético entre sí), ya que no es tan
     # relevante revisarlos ítem por ítem como Liquidación, FOB, etc.
-    CAMPOS_BAJA_PRIORIDAD = {"I:DNRT-EXC-OPC", "I:AUTOPARTESEG-OPC", "I:DNRT-OPC"}
+    CAMPOS_BAJA_PRIORIDAD = {"I:DNRT-EXC-OPC", "I:AUTOPARTESEG-OPC", "I:DNRT-OPC"} | set(CAMPOS_INFORMATIVOS)
 
     def _clave_campo(campo: str):
         campo = str(campo)
