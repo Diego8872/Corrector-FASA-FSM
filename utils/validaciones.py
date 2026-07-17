@@ -200,17 +200,7 @@ def validar_items(df_items: pd.DataFrame, df_subitems: pd.DataFrame = None, df_c
             if liqman:
                 resultados.append(alerta(item, "I:LIQMANIMPCONT", f"Sin CM debe estar vacío, tiene: '{liqman}'{suf}"))
 
-        ganancia = row.get("I:GANANCIASOP3", "").strip().upper()
-        if ganancia and ganancia != "COMERC":
-            resultados.append(alerta(item, "I:GANANCIASOP3", f"Debe ser COMERC, tiene: '{ganancia}'{suf}", "ERROR"))
-
-        dse_marca = row.get("I:DSE.MARCA.FRA1", "").strip().upper()
-        if dse_marca and dse_marca != "NO_VALIDA":
-            resultados.append(alerta(item, "I:DSE.MARCA.FRA1", f"Debe ser NO_VALIDA, tiene: '{dse_marca}'{suf}", "ERROR"))
-
-        impogiro = row.get("I:IMPOGIRO-DIV-OPC", "").strip().upper()
-        if impogiro and impogiro != IMPOGIRO:
-            resultados.append(alerta(item, "I:IMPOGIRO-DIV-OPC", f"Debe ser CGDDIF, tiene: '{impogiro}'{suf}", "ERROR"))
+        # (GANANCIASOP3, DSE.MARCA.FRA1, IMPOGIRO-DIV-OPC: ver validar_campos_control)
 
         for campo in ["I:DNRT-EXC-OPC", "I:AUTOPARTESEG-OPC", "I:DNRT-OPC"]:
             val = row.get(campo, "").strip()
@@ -465,14 +455,9 @@ def validar_ncm_excel(df_subitems: pd.DataFrame, df_ncm: pd.DataFrame, df_items:
     col_parte = None
     col_ncm = None
     for col in df_ncm.columns:
-        # str(col) porque, si el Excel de clasificación no trae fila de
-        # encabezado (formato "aéreo": solo 2 columnas de datos), pandas
-        # puede nombrar la columna con el primer valor de la fila (a
-        # veces un número/int), y ese valor no tiene método .upper().
-        col_str = str(col).upper()
-        if "PART_NUMBER" in col_str or "PARTE" in col_str:
+        if "PART_NUMBER" in col.upper() or "PARTE" in col.upper():
             col_parte = col
-        if col_str in ["NCM", "POSICION", "ARANCEL"]:
+        if col.upper() in ["NCM", "POSICION", "ARANCEL"]:
             col_ncm = col
 
     if not col_ncm and col_parte:
@@ -801,6 +786,128 @@ def validar_items_usados(df_items: pd.DataFrame, df_subitems: pd.DataFrame = Non
         resultados.append({
             "item": "GENERAL", "campo": CAMPO,
             "mensaje": "Ningún ítem declarado USADO",
+            "nivel": "OK", "es_resumen": True,
+        })
+
+    return resultados
+
+
+# ── Validación: campos de control declarativos (Items) ───────────────────────
+
+# Pueden venir vacíos, o con exactamente el valor esperado. Cualquier otro
+# valor -> ALERTA.
+CAMPOS_OPCIONALES_FIJOS = {
+    "I:LEY26184ART6": "NO",
+    "I:ARRISEMITEX": "NO",
+    "I:ARN-TXT": "NO",
+    "I:FTALATOS-TXT": "NO",
+    "I:DSE.MARCA.FRA1": "NO_VALIDA",
+    "I:RES451-19ANEXOI": "NO",
+    "I:ESDES": "NO",
+    "I:GAS1TXT": "NO",
+    "I:0N116_09_TXT1": "NO",
+    "I:SEDRONARACSULTXT": "NO",
+    "I:DSE.SINMARCA.OPC": "NO_VALIDA",
+    "I:ENV-UTEN-ALIM": "NO",
+    "I:SEMITEX-TXT": "NO",
+    "I:MERCURES75_TXT": "NO",
+    "I:PRECURSORMIXOPC": "NO_VALIDA",
+    "I:FLORA-R1766-TXT1": "NO",
+    "I:R92-NO-D613-TXT": "NO",
+    "I:PRODFAUSILVETEX": "NO",
+    "I:CODADV-GTZIA-TXT": "NO",
+    "I:INVO-D1/10-TXT": "NO",
+    "I:REGLAGRALI2AOPC": "RG2A-1",
+    "I:ASBESTOTXT": "NO",
+    "I:EXPLOARMASQUIMTX": "NO",
+    "I:CODADV-POSEE-TXT": "NO",
+}
+
+# Deben tener siempre exactamente el valor esperado — vacío también es error.
+CAMPOS_OBLIGATORIOS_FIJOS = {
+    "I:IVAADICIONAL1": "NO_VALIDA",
+    "I:GANANCIASOP3": "COMERC",
+    "I:DSE.PAIS.OPC": "430",
+    "I:TERRITORIOTEX-1": "NO",
+    "I:PAISEMIT-FACTCOM": "SI",
+    "I:IMPOGIRO-DIV-OPC": "CGDDIF",
+}
+
+# No deben tener ningún valor.
+CAMPOS_SIEMPRE_VACIO = []
+
+
+def validar_campos_control(df_items: pd.DataFrame, df_subitems: pd.DataFrame = None,
+                            df_caratula: pd.DataFrame = None, datos_cm: dict = None,
+                            datos_facturas: dict = None) -> list:
+    """
+    Controla un set de campos declarativos de la solapa Items contra su
+    valor esperado, en 3 modalidades (ver diccionarios arriba):
+
+      - CAMPOS_OPCIONALES_FIJOS: vacío o el valor esperado. Otro valor
+        -> ALERTA.
+      - CAMPOS_OBLIGATORIOS_FIJOS: siempre el valor esperado (vacío
+        también es error) -> ERROR.
+      - CAMPOS_SIEMPRE_VACIO: nunca debe tener valor -> ERROR si trae algo.
+
+    Genera detalle por ítem (mismo sufijo de referencia que el resto de
+    las validaciones) y un resumen exclusivo de Revisión General con la
+    cantidad de ítems con al menos una diferencia.
+    """
+    resultados = []
+    CAMPO_RESUMEN = "CAMPOS DE CONTROL"
+
+    if df_items is None or df_items.empty:
+        return resultados
+
+    ref_map = _build_ref_map(df_items, df_subitems, df_caratula, datos_cm, datos_facturas)
+    items_con_diferencia = set()
+    hubo_error = False
+    total_items = 0
+
+    for _, row in df_items.iterrows():
+        item = str(row.get("ITEM", "?")).strip().zfill(4)
+        r = ref_map.get(item, {})
+        suf = _ref(r.get("modelo", ""), r.get("factura", ""), r.get("cm", ""))
+        total_items += 1
+
+        for campo, esperado in CAMPOS_OPCIONALES_FIJOS.items():
+            val = str(row.get(campo, "") or "").strip()
+            if val and val.upper() != esperado.upper():
+                items_con_diferencia.add(item)
+                resultados.append(alerta(item, campo,
+                    f"Debe ser vacío o '{esperado}', tiene: '{val}'{suf}"))
+
+        for campo, esperado in CAMPOS_OBLIGATORIOS_FIJOS.items():
+            val = str(row.get(campo, "") or "").strip()
+            if val.upper() != esperado.upper():
+                items_con_diferencia.add(item)
+                hubo_error = True
+                resultados.append(alerta(item, campo,
+                    f"Debe ser '{esperado}', tiene: '{val or '(vacío)'}'{suf}", "ERROR"))
+
+        for campo in CAMPOS_SIEMPRE_VACIO:
+            val = str(row.get(campo, "") or "").strip()
+            if val:
+                items_con_diferencia.add(item)
+                hubo_error = True
+                resultados.append(alerta(item, campo,
+                    f"Debe estar vacío, tiene: '{val}'{suf}", "ERROR"))
+
+    if items_con_diferencia:
+        cant = len(items_con_diferencia)
+        items_str = ", ".join(sorted(items_con_diferencia))
+        pestana = "Errores" if hubo_error else "Alertas"
+        nivel = "ERROR" if hubo_error else "ALERTA"
+        resultados.append({
+            "item": "GENERAL", "campo": CAMPO_RESUMEN,
+            "mensaje": f"De {total_items} ítems, {cant} con algún campo de control fuera de lo esperado: {items_str} — ver pestaña {pestana}",
+            "nivel": nivel, "es_resumen": True,
+        })
+    else:
+        resultados.append({
+            "item": "GENERAL", "campo": CAMPO_RESUMEN,
+            "mensaje": f"Los {total_items} ítems tienen todos los campos de control según lo esperado",
             "nivel": "OK", "es_resumen": True,
         })
 
