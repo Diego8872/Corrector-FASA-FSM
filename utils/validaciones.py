@@ -794,35 +794,6 @@ def validar_items_usados(df_items: pd.DataFrame, df_subitems: pd.DataFrame = Non
 
 # ── Validación: campos de control declarativos (Items) ───────────────────────
 
-# Pueden venir vacíos, o con exactamente el valor esperado. Cualquier otro
-# valor -> ALERTA.
-CAMPOS_OPCIONALES_FIJOS = {
-    "I:LEY26184ART6": "NO",
-    "I:ARRISEMITEX": "NO",
-    "I:ARN-TXT": "NO",
-    "I:FTALATOS-TXT": "NO",
-    "I:DSE.MARCA.FRA1": "NO_VALIDA",
-    "I:RES451-19ANEXOI": "NO",
-    "I:ESDES": "NO",
-    "I:GAS1TXT": "NO",
-    "I:0N116_09_TXT1": "NO",
-    "I:SEDRONARACSULTXT": "NO",
-    "I:DSE.SINMARCA.OPC": "NO_VALIDA",
-    "I:ENV-UTEN-ALIM": "NO",
-    "I:SEMITEX-TXT": "NO",
-    "I:MERCURES75_TXT": "NO",
-    "I:PRECURSORMIXOPC": "NO_VALIDA",
-    "I:FLORA-R1766-TXT1": "NO",
-    "I:R92-NO-D613-TXT": "NO",
-    "I:PRODFAUSILVETEX": "NO",
-    "I:CODADV-GTZIA-TXT": "NO",
-    "I:INVO-D1/10-TXT": "NO",
-    "I:REGLAGRALI2AOPC": "RG2A-1",
-    "I:ASBESTOTXT": "NO",
-    "I:EXPLOARMASQUIMTX": "NO",
-    "I:CODADV-POSEE-TXT": "NO",
-}
-
 # Deben tener siempre exactamente el valor esperado — vacío también es error.
 CAMPOS_OBLIGATORIOS_FIJOS = {
     "I:IVAADICIONAL1": "NO_VALIDA",
@@ -833,37 +804,54 @@ CAMPOS_OBLIGATORIOS_FIJOS = {
     "I:IMPOGIRO-DIV-OPC": "CGDDIF",
 }
 
-# No deben tener ningún valor.
-CAMPOS_SIEMPRE_VACIO = []
+# El resto: en teoría deberían venir vacíos. No se compara contra un valor
+# esperado (evita tener que adivinar "NO" vs "NO_VALIDA" campo por campo) —
+# simplemente se informa cualquier valor no vacío que traigan, agrupado por
+# campo+valor a nivel despacho (para no listar cientos de ítems sueltos
+# cuando el mismo valor se repite en muchos), con el detalle real ítem por
+# ítem en Alertas.
+CAMPOS_INFORMATIVOS = [
+    "I:LEY26184ART6", "I:ARRISEMITEX", "I:ARN-TXT", "I:FTALATOS-TXT",
+    "I:DSE.MARCA.FRA1", "I:RES451-19ANEXOI", "I:ESDES", "I:GAS1TXT",
+    "I:0N116_09_TXT1", "I:SEDRONARACSULTXT", "I:DSE.SINMARCA.OPC",
+    "I:ENV-UTEN-ALIM", "I:SEMITEX-TXT", "I:MERCURES75_TXT",
+    "I:PRECURSORMIXOPC", "I:FLORA-R1766-TXT1", "I:R92-NO-D613-TXT",
+    "I:PRODFAUSILVETEX", "I:CODADV-GTZIA-TXT", "I:INVO-D1/10-TXT",
+    "I:REGLAGRALI2AOPC", "I:ASBESTOTXT", "I:EXPLOARMASQUIMTX",
+    "I:CODADV-POSEE-TXT",
+]
 
 
 def validar_campos_control(df_items: pd.DataFrame, df_subitems: pd.DataFrame = None,
                             df_caratula: pd.DataFrame = None, datos_cm: dict = None,
                             datos_facturas: dict = None) -> list:
     """
-    Controla un set de campos declarativos de la solapa Items contra su
-    valor esperado, en 3 modalidades (ver diccionarios arriba):
+    Controla un set de campos declarativos de la solapa Items, en 2
+    modalidades (ver listas/dict arriba):
 
-      - CAMPOS_OPCIONALES_FIJOS: vacío o el valor esperado. Otro valor
-        -> ALERTA.
       - CAMPOS_OBLIGATORIOS_FIJOS: siempre el valor esperado (vacío
-        también es error) -> ERROR.
-      - CAMPOS_SIEMPRE_VACIO: nunca debe tener valor -> ERROR si trae algo.
+        también es error) -> ERROR por ítem.
+      - CAMPOS_INFORMATIVOS: en teoría vacíos. No se comparan contra un
+        valor esperado — cualquier valor no vacío se informa (ALERTA),
+        agrupado por campo+valor a nivel despacho.
 
     Genera detalle por ítem (mismo sufijo de referencia que el resto de
-    las validaciones) y un resumen exclusivo de Revisión General con la
-    cantidad de ítems con al menos una diferencia.
+    las validaciones) y un resumen exclusivo de Revisión General: una
+    línea por cada (campo obligatorio) con diferencias, y una línea por
+    cada (campo informativo, valor) encontrado.
     """
     resultados = []
-    CAMPO_RESUMEN = "CAMPOS DE CONTROL"
 
     if df_items is None or df_items.empty:
         return resultados
 
     ref_map = _build_ref_map(df_items, df_subitems, df_caratula, datos_cm, datos_facturas)
-    items_con_diferencia = set()
-    hubo_error = False
     total_items = 0
+
+    items_obligatorio_mal = set()
+
+    # {campo: {valor: [items]}}
+    valores_informativos = {c: {} for c in CAMPOS_INFORMATIVOS}
 
     for _, row in df_items.iterrows():
         item = str(row.get("ITEM", "?")).strip().zfill(4)
@@ -871,44 +859,57 @@ def validar_campos_control(df_items: pd.DataFrame, df_subitems: pd.DataFrame = N
         suf = _ref(r.get("modelo", ""), r.get("factura", ""), r.get("cm", ""))
         total_items += 1
 
-        for campo, esperado in CAMPOS_OPCIONALES_FIJOS.items():
-            val = str(row.get(campo, "") or "").strip()
-            if val and val.upper() != esperado.upper():
-                items_con_diferencia.add(item)
-                resultados.append(alerta(item, campo,
-                    f"Debe ser vacío o '{esperado}', tiene: '{val}'{suf}"))
-
         for campo, esperado in CAMPOS_OBLIGATORIOS_FIJOS.items():
             val = str(row.get(campo, "") or "").strip()
             if val.upper() != esperado.upper():
-                items_con_diferencia.add(item)
-                hubo_error = True
+                items_obligatorio_mal.add(item)
                 resultados.append(alerta(item, campo,
                     f"Debe ser '{esperado}', tiene: '{val or '(vacío)'}'{suf}", "ERROR"))
 
-        for campo in CAMPOS_SIEMPRE_VACIO:
+        for campo in CAMPOS_INFORMATIVOS:
             val = str(row.get(campo, "") or "").strip()
             if val:
-                items_con_diferencia.add(item)
-                hubo_error = True
-                resultados.append(alerta(item, campo,
-                    f"Debe estar vacío, tiene: '{val}'{suf}", "ERROR"))
+                resultados.append(alerta(item, campo, f"Declarado: '{val}' — informativo, verificar{suf}"))
+                valores_informativos[campo].setdefault(val, []).append(item)
 
-    if items_con_diferencia:
-        cant = len(items_con_diferencia)
-        items_str = ", ".join(sorted(items_con_diferencia))
-        pestana = "Errores" if hubo_error else "Alertas"
-        nivel = "ERROR" if hubo_error else "ALERTA"
+    # ── Resumen: campos obligatorios ──
+    if items_obligatorio_mal:
+        cant = len(items_obligatorio_mal)
         resultados.append({
-            "item": "GENERAL", "campo": CAMPO_RESUMEN,
-            "mensaje": f"De {total_items} ítems, {cant} con algún campo de control fuera de lo esperado: {items_str} — ver pestaña {pestana}",
-            "nivel": nivel, "es_resumen": True,
+            "item": "GENERAL", "campo": "CAMPOS DE CONTROL (obligatorios)",
+            "mensaje": f"{cant} de {total_items} ítems con algún campo obligatorio fuera de lo esperado — ver pestaña Errores",
+            "nivel": "ERROR", "es_resumen": True,
         })
     else:
         resultados.append({
-            "item": "GENERAL", "campo": CAMPO_RESUMEN,
-            "mensaje": f"Los {total_items} ítems tienen todos los campos de control según lo esperado",
+            "item": "GENERAL", "campo": "CAMPOS DE CONTROL (obligatorios)",
+            "mensaje": f"Los {total_items} ítems tienen los campos obligatorios según lo esperado",
             "nivel": "OK", "es_resumen": True,
         })
+
+    # ── Resumen: campos informativos (agrupado por campo + valor) ──
+    campos_con_valores = {c: v for c, v in valores_informativos.items() if v}
+    if not campos_con_valores:
+        resultados.append({
+            "item": "GENERAL", "campo": "CAMPOS DE CONTROL (informativos)",
+            "mensaje": f"Ningún ítem con valor declarado en los {len(CAMPOS_INFORMATIVOS)} campos informativos revisados",
+            "nivel": "OK", "es_resumen": True,
+        })
+    else:
+        for campo, valores in campos_con_valores.items():
+            for valor, items_lista in valores.items():
+                cant = len(items_lista)
+                resultados.append({
+                    "item": "GENERAL", "campo": campo,
+                    "mensaje": f"Valor '{valor}' declarado en {cant} de {total_items} ítems — ver pestaña Alertas",
+                    "nivel": "ALERTA", "es_resumen": True,
+                })
+        campos_vacios = [c for c in CAMPOS_INFORMATIVOS if c not in campos_con_valores]
+        if campos_vacios:
+            resultados.append({
+                "item": "GENERAL", "campo": "CAMPOS DE CONTROL (informativos)",
+                "mensaje": f"Otros {len(campos_vacios)} campos informativos sin valores declarados: {', '.join(campos_vacios)}",
+                "nivel": "OK", "es_resumen": True,
+            })
 
     return resultados
