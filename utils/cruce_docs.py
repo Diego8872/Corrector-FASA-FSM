@@ -198,7 +198,22 @@ def validar_factura_vs_di(
         fob_di     = safe_float(subrow.get("MONTO FOB", 0))
         cantidad_di = safe_float(subrow.get("CANTIDAD", 0))
 
-        if not modelo_di or not item_num or item_num == "0000":
+        if not item_num or item_num == "0000":
+            continue
+
+        if not modelo_di:
+            # Ítem sin código de modelo declarado en el DI — antes se
+            # saltaba en silencio (sin generar ninguna fila), por lo que
+            # el resumen general contaba estos casos como "no
+            # comparable(s)" y mandaba a la pestaña Alertas, pero ahí no
+            # había nada que mostrar. Ahora queda explícito, con el FOB
+            # y cantidad declarados en el DI como referencia.
+            resultados.append(alerta(
+                item_num, "CÓDIGO (FACTURA)",
+                f"Ítem sin código de modelo declarado en el DI (solapa Subitems) — no se pudo comparar contra factura "
+                f"| FOB DI: {fob_di:.2f} | Cantidad DI: {cantidad_di:.0f}",
+                "ALERTA"
+            ))
             continue
 
         # Reunir TODOS los candidatos de TODAS las facturas que matcheen
