@@ -41,6 +41,6 @@ CONCEPTO_SIN_CM_PROHIBIDO = "032"
 # Concepto para ítems USADOS
 CONCEPTO_USADO = "056"
 # Palabras clave para detectar dumping en liquidación
-KEYWORDS_DUMPING = ["DUMP", "060"]  # "DUMP" cubre "DUMPING", "ANTIDUMPING" y "D.A-DUMP DERESP" (concepto 051)
+KEYWORDS_DUMPING = ["DUMP", "ANTIDUM", "060"]  # "DUMP" cubre "DUMPING"/"D.A-DUMP DERESP" (051); "ANTIDUM" cubre "D.ANTIDUM.AD-VALOR" (058)
 # Tolerancia de redondeo para comparación de valores FOB
 TOLERANCIA_FOB = 0.05
