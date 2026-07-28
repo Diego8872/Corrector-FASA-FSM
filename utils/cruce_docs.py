@@ -294,13 +294,16 @@ def validar_factura_vs_di(
                 ))
 
             if abs(fob_di - fob_esperado) > TOLERANCIA_FOB:
-                resultados.append(alerta(
+                fila_diff_fob = alerta(
                     item_num, "MONTO FOB (FACTURA)",
                     f"FOB DI: {fob_di:.2f} — FOB factura: {fob_esperado:.2f} "
                     f"(dif: {abs(fob_di - fob_esperado):.2f}) | "
                     f"Código: {codigo_ref} | Factura: {nro_factura}",
                     "ERROR"
-                ))
+                )
+                # DI - factura (con signo): usado por validar_caratula_totales para reconciliar el total
+                fila_diff_fob["dif_fob"] = round(fob_di - fob_esperado, 2)
+                resultados.append(fila_diff_fob)
             else:
                 resultados.append(ok(
                     item_num, "MONTO FOB (FACTURA)",
@@ -313,11 +316,13 @@ def validar_factura_vs_di(
             )
 
         if not encontrado:
-            resultados.append(alerta(
+            fila_sin_match = alerta(
                 item_num, "CÓDIGO (FACTURA)",
-                f"No se encontró código '{modelo_di}' en ninguna factura subida",
+                f"No se encontró código '{modelo_di}' en ninguna factura subida | FOB DI: {fob_di:.2f}",
                 "ALERTA"
-            ))
+            )
+            fila_sin_match["fob_di"] = fob_di  # usado por validar_caratula_totales para reconciliar el total
+            resultados.append(fila_sin_match)
             # Segunda validación igual: el código puede estar en clasificación aunque no en factura
             resultados.extend(
                 _validar_codigo_en_clasificacion(modelo_di, codigos_clasi, item_num, "—")
@@ -380,18 +385,63 @@ def validar_caratula_totales(caratula: dict, datos_facturas: dict, datos_forward
         fob_di = safe_float(_buscar_caratula(caratula, "FOB") or 0)
 
         if round(fob_di, 2) != fob_total_facturas:
-            # Buscar, entre los resultados ya calculados de MONTO FOB
-            # (FACTURA), los ítems con diferencia — para orientar la
-            # revisión hacia la causa probable de la diferencia del total,
-            # en vez de dejar solo el número agregado.
-            items_con_diff = sorted({
-                str(r.get("item", "")) for r in (resultados_factura_vs_di or [])
+            # Reconciliar la diferencia del total contra las dos causas que
+            # ya detecta validar_factura_vs_di(), en vez de dejar solo el
+            # número agregado sin explicación:
+            #   1) Ítems que SÍ matchearon contra una factura pero con FOB
+            #      distinto → aportan (FOB DI - FOB factura) cada uno.
+            #   2) Ítems del DI que no encontraron ninguna factura que los
+            #      respalde → aportan su FOB DI completo (típicamente porque
+            #      no se subieron todas las facturas de la operación).
+            filas_diff = [
+                r for r in (resultados_factura_vs_di or [])
                 if r.get("campo") == "MONTO FOB (FACTURA)" and r.get("nivel") != "OK"
-                and "FOB DI:" in str(r.get("mensaje", "")) and "FOB factura:" in str(r.get("mensaje", ""))
-            })
-            sufijo_items = f" | Ítems con diferencia de FOB vs factura: {', '.join(items_con_diff)}" if items_con_diff else ""
+                and "dif_fob" in r
+            ]
+            filas_sin_factura = [
+                r for r in (resultados_factura_vs_di or [])
+                if r.get("campo") == "CÓDIGO (FACTURA)"
+                and "No se encontró código" in str(r.get("mensaje", ""))
+                and "fob_di" in r
+            ]
+
+            aporte_diff = round(sum(r["dif_fob"] for r in filas_diff), 2)
+            aporte_sin_factura = round(sum(r["fob_di"] for r in filas_sin_factura), 2)
+            aporte_total = round(aporte_diff + aporte_sin_factura, 2)
+            diferencia_total = round(fob_di - fob_total_facturas, 2)
+
+            partes_sufijo = []
+            if filas_diff:
+                items_con_diff = sorted({str(r.get("item", "")) for r in filas_diff})
+                partes_sufijo.append(
+                    f"Ítems con diferencia de FOB vs factura (aportan {aporte_diff:.2f}): "
+                    f"{', '.join(items_con_diff)}"
+                )
+            if filas_sin_factura:
+                items_sin_factura = sorted({str(r.get("item", "")) for r in filas_sin_factura})
+                MAX_MOSTRAR = 15
+                listado = ', '.join(items_sin_factura[:MAX_MOSTRAR])
+                if len(items_sin_factura) > MAX_MOSTRAR:
+                    listado += f", … (+{len(items_sin_factura) - MAX_MOSTRAR} más)"
+                partes_sufijo.append(
+                    f"{len(items_sin_factura)} ítem(s) del DI sin ninguna factura que los respalde, "
+                    f"aportan {aporte_sin_factura:.2f} (revisar si faltan facturas por subir): {listado}"
+                )
+
+            # Si lo identificado explica la diferencia total (con margen de
+            # redondeo), lo dejamos explícito; si no, avisamos que queda un
+            # resto sin explicar por estas dos causas (puede haber otro motivo,
+            # p.ej. facturas de más, o un cargo no contemplado).
+            resto = round(diferencia_total - aporte_total, 2)
+            if partes_sufijo:
+                if abs(resto) <= TOLERANCIA_FOB:
+                    partes_sufijo.append("→ esto explica la diferencia total")
+                else:
+                    partes_sufijo.append(f"→ resto sin explicar por estas causas: {resto:.2f}")
+
+            sufijo_items = f" | {' | '.join(partes_sufijo)}" if partes_sufijo else ""
             resultados.append(al("FOB", f"DI: {fob_di:.2f} — Suma de facturas: {fob_total_facturas:.2f} "
-                                          f"(dif: {abs(fob_di - fob_total_facturas):.2f}){sufijo_items}", "ERROR"))
+                                          f"(dif: {abs(diferencia_total):.2f}){sufijo_items}", "ERROR"))
         else:
             resultados.append(ok_("FOB", f"FOB total correcto: {fob_di:.2f}"))
 
