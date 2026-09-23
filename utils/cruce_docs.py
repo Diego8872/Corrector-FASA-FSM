@@ -129,7 +129,10 @@ def validar_cm_vs_di(df_items: pd.DataFrame, df_subitems: pd.DataFrame, datos_cm
                 item_cm = next(
                     (ic for ic in matches_codigo
                      if abs(safe_float(ic.get("cantidad", 0)) - cantidad_di) < 0.01
-                     and abs(safe_float(ic.get("valor_total_fob", 0)) - fob_di) < TOLERANCIA_FOB),
+                     # Redondeado a 2 decimales (centavos) para no comparar bits crudos de
+                     # floats, y <= (no <) para que TOLERANCIA_FOB = 0 siga aceptando un
+                     # match exacto en vez de rechazar siempre.
+                     and abs(round(safe_float(ic.get("valor_total_fob", 0)), 2) - round(fob_di, 2)) <= TOLERANCIA_FOB),
                     matches_codigo[0]
                 )
 
@@ -293,7 +296,11 @@ def validar_factura_vs_di(
                     f"Código DI: {modelo_di} — Código factura: {codigo_ref} | Factura: {nro_factura}"
                 ))
 
-            if abs(fob_di - fob_esperado) > TOLERANCIA_FOB:
+            # Redondeado a 2 decimales (centavos) antes de comparar: con
+            # TOLERANCIA_FOB = 0, comparar los floats crudos generaría falsos
+            # positivos por ruido binario (p.ej. cantidad * precio_unitario
+            # puede dar 453.53000000000003 en vez de 453.53 exacto).
+            if abs(round(fob_di, 2) - round(fob_esperado, 2)) > TOLERANCIA_FOB:
                 fila_diff_fob = alerta(
                     item_num, "MONTO FOB (FACTURA)",
                     f"FOB DI: {fob_di:.2f} — FOB factura: {fob_esperado:.2f} "
